@@ -1,0 +1,32 @@
+{
+  "name": "opengerberdiff",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenGerberDiff (OGD) — free, open-source, pure-web visual + quantitative diff tool for Gerber/Excellon PCB files.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm --filter @ogd/core build && pnpm --filter @ogd/app-web build",
+    "dev": "pnpm --filter @ogd/app-web dev",
+    "preview": "pnpm --filter @ogd/app-web preview",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "prettier --check . && eslint .",
+    "format": "prettier --write .",
+    "test": "pnpm -r test",
+    "e2e": "pnpm --filter @ogd/app-web e2e"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "prettier-plugin-svelte": "^3.3.2",
+    "svelte": "^5.16.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1"
+  }
+}
