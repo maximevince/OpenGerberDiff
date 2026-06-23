@@ -20,6 +20,12 @@ function zipFile(entries: Record<string, Uint8Array>) {
   return { name: 'p.zip', mimeType: 'application/zip', buffer: Buffer.from(zipSync(entries)) };
 }
 
+/** Load a single project into A and continue to the viewer (intro stays up until both). */
+async function loadSingle(page: Page, file: Parameters<Page['setInputFiles']>[1]): Promise<void> {
+  await page.setInputFiles(FILE_A, file);
+  await page.getByTestId('continue-single').click();
+}
+
 /** Count canvas pixels that differ clearly from the dark navy background. */
 async function copperPixels(page: Page): Promise<number> {
   return page.evaluate(async () => {
@@ -37,7 +43,7 @@ async function copperPixels(page: Page): Promise<number> {
 
 test('loads a single Gerber into slot A and renders it', async ({ page }) => {
   await page.goto('/');
-  await page.setInputFiles(FILE_A, fixture);
+  await loadSingle(page, fixture);
   await expect(page.getByTestId('board-canvas')).toBeVisible();
   await expect(page.getByTestId('layer-count')).toHaveText('1');
   await expect(page.getByTestId('error')).toHaveCount(0);
@@ -46,15 +52,15 @@ test('loads a single Gerber into slot A and renders it', async ({ page }) => {
 
 test('renders richer primitives (obround, polygon, region, arc)', async ({ page }) => {
   await page.goto('/');
-  await page.setInputFiles(FILE_A, richFixture);
+  await loadSingle(page, richFixture);
   await expect(page.getByTestId('board-canvas')).toBeVisible();
   expect(await copperPixels(page)).toBeGreaterThan(200);
 });
 
 test('multi-layer zip classifies and lists layers', async ({ page }) => {
   await page.goto('/');
-  await page.setInputFiles(
-    FILE_A,
+  await loadSingle(
+    page,
     zipFile({
       'board-F_Cu.gbr': pad(0),
       'board-B_Cu.gbr': pad(20000),
@@ -69,10 +75,7 @@ test('multi-layer zip classifies and lists layers', async ({ page }) => {
 
 test('layer context menu: show-only and reassign type', async ({ page }) => {
   await page.goto('/');
-  await page.setInputFiles(
-    FILE_A,
-    zipFile({ 'board-F_Cu.gbr': pad(0), 'mystery.gbr': pad(40000) }),
-  );
+  await loadSingle(page, zipFile({ 'board-F_Cu.gbr': pad(0), 'mystery.gbr': pad(40000) }));
   await expect(page.getByTestId('layer-row')).toHaveCount(2);
 
   await page.getByTestId('layer-row').first().click({ button: 'right' });
@@ -89,10 +92,7 @@ test('layer context menu: show-only and reassign type', async ({ page }) => {
 
 test('keyboard H/A toggle all layer visibility', async ({ page }) => {
   await page.goto('/');
-  await page.setInputFiles(
-    FILE_A,
-    zipFile({ 'board-F_Cu.gbr': pad(0), 'board-B_Cu.gbr': pad(40000) }),
-  );
+  await loadSingle(page, zipFile({ 'board-F_Cu.gbr': pad(0), 'board-B_Cu.gbr': pad(40000) }));
   await expect(page.getByTestId('layer-row')).toHaveCount(2);
   const before = await copperPixels(page);
   await page.keyboard.press('h');
@@ -105,6 +105,49 @@ test('empty screen shows big A and B dropzones', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('bigdrop-a')).toBeVisible();
   await expect(page.getByTestId('bigdrop-b')).toBeVisible();
+});
+
+test('intro keeps both dropzones until the second project loads', async ({ page }) => {
+  await page.goto('/');
+  await page.setInputFiles(FILE_A, zipFile({ 'board-F_Cu.gbr': pad(0) }));
+  // After A loads, the intro stays up (both zones present) — no viewer yet.
+  await expect(page.getByTestId('continue-single')).toBeVisible();
+  await expect(page.getByTestId('bigdrop-a')).toBeVisible();
+  await expect(page.getByTestId('bigdrop-b')).toBeVisible();
+  await expect(page.getByTestId('board-canvas')).toHaveCount(0);
+  // Dropping B advances straight into the diff workspace.
+  await page.setInputFiles(FILE_B, zipFile({ 'board-F_Cu.gbr': pad(20000) }));
+  await expect(page.getByTestId('board-canvas')).toBeVisible();
+  await expect(page.getByTestId('bigdrop-a')).toHaveCount(0);
+});
+
+test('continue-single button opens the single-project viewer', async ({ page }) => {
+  await page.goto('/');
+  await page.setInputFiles(FILE_A, zipFile({ 'board-F_Cu.gbr': pad(0) }));
+  await page.getByTestId('continue-single').click();
+  await expect(page.getByTestId('board-canvas')).toBeVisible();
+});
+
+test('layer visibility stays in sync across A and B views', async ({ page }) => {
+  await page.goto('/');
+  await page.setInputFiles(
+    FILE_A,
+    zipFile({ 'board-F_Cu.gbr': pad(0), 'board-B_Cu.gbr': pad(40000) }),
+  );
+  await page.setInputFiles(
+    FILE_B,
+    zipFile({ 'board-F_Cu.gbr': pad(0), 'board-B_Cu.gbr': pad(40000) }),
+  );
+  await expect(page.getByTestId('diff-summary')).toBeVisible();
+
+  // Hide the first layer while viewing project A.
+  await page.getByRole('button', { name: 'A', exact: true }).click();
+  await page.locator('[data-testid=layer-row] .vis').first().click();
+  await expect(page.locator('[data-testid=layer-row]').first()).toHaveClass(/hidden/);
+
+  // Switch to project B — the same layer must still be hidden.
+  await page.getByRole('button', { name: 'B', exact: true }).click();
+  await expect(page.locator('[data-testid=layer-row]').first()).toHaveClass(/hidden/);
 });
 
 test('diff mode respects per-layer visibility', async ({ page }) => {
@@ -185,7 +228,7 @@ test('A vs B diff: summary, totals and region navigation', async ({ page }) => {
 
 test('disjoint traces sharing a tool do not bridge across the board', async ({ page }) => {
   await page.goto('/');
-  await page.setInputFiles(FILE_A, disjointFixture);
+  await loadSingle(page, disjointFixture);
   await expect(page.getByTestId('board-canvas')).toBeVisible();
 
   const ratio = await page.evaluate(async () => {
@@ -224,7 +267,7 @@ test('a malformed file does not freeze the app', async ({ page }) => {
 
 test('pan and zoom do not crash', async ({ page }) => {
   await page.goto('/');
-  await page.setInputFiles(FILE_A, fixture);
+  await loadSingle(page, fixture);
   const canvas = page.getByTestId('board-canvas');
   await expect(canvas).toBeVisible();
   await canvas.hover();

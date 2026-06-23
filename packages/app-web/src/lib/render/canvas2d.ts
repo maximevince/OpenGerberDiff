@@ -1,13 +1,5 @@
-import {
-  ADDED,
-  COMMON,
-  REMOVED,
-  type GridSpec,
-  type Image,
-  type PathSegment,
-  type ShapePrimitive,
-} from '@ogd/core';
-import { worldToScreen, type Viewport } from './viewport.js';
+import { type Image, type PathSegment, type ShapePrimitive } from '@ogd/core';
+import { type Viewport } from './viewport.js';
 
 export interface RenderStyle {
   background: string;
@@ -256,74 +248,93 @@ export function renderLayers(
 }
 
 // ---------------------------------------------------------------------------
-// Diff rendering — paint per-cell class grids (added / removed / common).
+// Diff rendering — VECTOR overlay, re-rendered each frame from real geometry, so
+// it stays crisp at any zoom (the raster class-grid is kept only for area metrics
+// and region navigation, never drawn). Per layer pair we render A and B to alpha
+// masks, then composite the three classes by set ops:
+//   removed = A ∖ B   added = B ∖ A   common = A ∩ B
+// All exact, no boolean-clipping dependency, no resolution ceiling.
 // ---------------------------------------------------------------------------
 
-export interface DiffRender {
-  spec: GridSpec;
-  classGrid: Uint8Array;
+export interface DiffPair {
+  aImage: Image | null;
+  bImage: Image | null;
+  /** Alignment translation applied to B (mm), from the diff result. */
+  offsetX: number;
+  offsetY: number;
 }
 
-// Colorblind-safe palette (blue added / orange removed).
-const PALETTE: Record<number, [number, number, number, number]> = {
-  [ADDED]: [44, 127, 184, 255],
-  [REMOVED]: [230, 119, 46, 255],
-  [COMMON]: [128, 132, 150, 70],
-};
-
-const diffCanvasCache = new WeakMap<Uint8Array, HTMLCanvasElement | OffscreenCanvas>();
-
-function diffCanvas(spec: GridSpec, classGrid: Uint8Array): HTMLCanvasElement | OffscreenCanvas {
-  let canvas = diffCanvasCache.get(classGrid);
-  if (canvas) return canvas;
-  const { cols, rows } = spec;
-  canvas =
-    typeof OffscreenCanvas !== 'undefined'
-      ? new OffscreenCanvas(cols, rows)
-      : Object.assign(document.createElement('canvas'), { width: cols, height: rows });
-  const ctx = canvas.getContext('2d') as unknown as CanvasRenderingContext2D;
-  const img = ctx.createImageData(cols, rows);
-  const d = img.data;
-  for (let row = 0; row < rows; row++) {
-    const srcRow = rows - 1 - row; // flip Y so image row 0 = top (max world Y)
-    for (let col = 0; col < cols; col++) {
-      const cls = classGrid[srcRow * cols + col]!;
-      const rgba = PALETTE[cls];
-      if (!rgba) continue;
-      const di = (row * cols + col) * 4;
-      d[di] = rgba[0];
-      d[di + 1] = rgba[1];
-      d[di + 2] = rgba[2];
-      d[di + 3] = rgba[3];
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-  diffCanvasCache.set(classGrid, canvas);
-  return canvas;
-}
+// Colorblind-safe palette (blue added / orange removed; faint gray context).
+const ADDED_FILL = 'rgba(44, 127, 184, 1)';
+const REMOVED_FILL = 'rgba(230, 119, 46, 1)';
+const COMMON_FILL = 'rgba(128, 132, 150, 0.5)';
 
 export function renderDiff(
   ctx: CanvasRenderingContext2D,
-  diffs: DiffRender[],
+  pairs: DiffPair[],
   vp: Viewport,
   background: string,
 ): void {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.clearRect(0, 0, vp.width, vp.height);
-  ctx.imageSmoothingEnabled = false;
 
-  for (const diff of diffs) {
-    const { spec } = diff;
-    const [x0, y0] = worldToScreen(vp, spec.originX, spec.originY + spec.rows * spec.cellSize);
-    const [x1, y1] = worldToScreen(vp, spec.originX + spec.cols * spec.cellSize, spec.originY);
-    ctx.drawImage(diffCanvas(spec, diff.classGrid), x0, y0, x1 - x0, y1 - y0);
+  const mA = poolAt(0, vp.width, vp.height);
+  const mB = poolAt(1, vp.width, vp.height);
+  const scratch = poolAt(2, vp.width, vp.height);
+
+  for (const p of pairs) {
+    renderMask(mA, p.aImage, vp, 0, 0);
+    renderMask(mB, p.bImage, vp, p.offsetX, p.offsetY);
+    // common first (faint), then the changes on top.
+    blitClass(ctx, scratch, mA.canvas, mB.canvas, 'destination-in', COMMON_FILL, vp);
+    blitClass(ctx, scratch, mA.canvas, mB.canvas, 'destination-out', REMOVED_FILL, vp);
+    blitClass(ctx, scratch, mB.canvas, mA.canvas, 'destination-out', ADDED_FILL, vp);
   }
 
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'destination-over';
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, vp.width, vp.height);
   ctx.globalCompositeOperation = 'source-over';
+}
+
+/** Render one image's filled copper as an opaque alpha mask (translated by ox/oy mm). */
+function renderMask(o: Offscreen, image: Image | null, vp: Viewport, ox: number, oy: number): void {
+  o.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  o.ctx.globalCompositeOperation = 'source-over';
+  o.ctx.clearRect(0, 0, vp.width, vp.height);
+  if (!image) return;
+  o.ctx.setTransform(vp.zoom, 0, 0, -vp.zoom, vp.panX + vp.zoom * ox, vp.panY - vp.zoom * oy);
+  drawCompiled(o.ctx, compiledFor(image), '#fff');
+}
+
+/**
+ * Combine two masks by a set op into `scratch`, tint the result, and blit it onto
+ * `ctx`. `op = 'destination-out'` → first∖second; `op = 'destination-in'` → first∩second.
+ */
+function blitClass(
+  ctx: CanvasRenderingContext2D,
+  scratch: Offscreen,
+  first: HTMLCanvasElement | OffscreenCanvas,
+  second: HTMLCanvasElement | OffscreenCanvas,
+  op: 'destination-in' | 'destination-out',
+  color: string,
+  vp: Viewport,
+): void {
+  const s = scratch.ctx;
+  s.setTransform(1, 0, 0, 1, 0, 0);
+  s.globalCompositeOperation = 'source-over';
+  s.clearRect(0, 0, vp.width, vp.height);
+  s.drawImage(first as CanvasImageSource, 0, 0);
+  s.globalCompositeOperation = op;
+  s.drawImage(second as CanvasImageSource, 0, 0);
+  // Tint the surviving alpha with the class color.
+  s.globalCompositeOperation = 'source-in';
+  s.fillStyle = color;
+  s.fillRect(0, 0, vp.width, vp.height);
+  s.globalCompositeOperation = 'source-over';
+  ctx.drawImage(scratch.canvas as CanvasImageSource, 0, 0);
 }
 
 interface Offscreen {
@@ -342,6 +353,22 @@ function getOffscreen(w: number, h: number): Offscreen {
     offscreen = { canvas, ctx, w, h };
   }
   return offscreen;
+}
+
+// Reusable mask/scratch canvases for the vector diff (indices 0=A, 1=B, 2=scratch).
+const maskPool: Array<(Offscreen & { w: number; h: number }) | undefined> = [];
+function poolAt(i: number, w: number, h: number): Offscreen {
+  let o = maskPool[i];
+  if (!o || o.w !== w || o.h !== h) {
+    const canvas: HTMLCanvasElement | OffscreenCanvas =
+      typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(w, h)
+        : Object.assign(document.createElement('canvas'), { width: w, height: h });
+    const ctx = canvas.getContext('2d') as unknown as CanvasRenderingContext2D;
+    o = { canvas, ctx, w, h };
+    maskPool[i] = o;
+  }
+  return o;
 }
 
 // ---------------------------------------------------------------------------

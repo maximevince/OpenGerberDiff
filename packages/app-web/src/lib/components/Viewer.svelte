@@ -5,19 +5,14 @@
     unionBoundingBox,
     type BoundingBox,
   } from '@ogd/core';
-  import {
-    renderDiff,
-    renderLayers,
-    type DiffRender,
-    type RenderLayer,
-  } from '$lib/render/canvas2d';
+  import { renderDiff, renderLayers, type DiffPair, type RenderLayer } from '$lib/render/canvas2d';
   import { fitView, panBy, zoomAbout, type Viewport } from '$lib/render/viewport';
 
   interface Props {
     /** Layers in top-first order (rendered bottom-first) — also used for framing. */
     layers: RenderLayer[];
     mode?: 'layers' | 'diff';
-    diffs?: DiffRender[];
+    diffs?: DiffPair[];
     background?: string;
     /** Change to trigger a re-fit (e.g. when a new project loads). */
     fitKey?: unknown;

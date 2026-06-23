@@ -45,10 +45,14 @@
   let focusKey = $state(0);
   let inputA: HTMLInputElement | undefined = $state();
   let inputB: HTMLInputElement | undefined = $state();
+  // The intro dual-dropzone stays up until BOTH projects are loaded, so a second
+  // file can be dropped without the view collapsing. User can opt out via a button.
+  let forceSingle = $state(false);
 
   const hasA = $derived(slotA.length > 0);
   const hasB = $derived(slotB.length > 0);
   const hasBoth = $derived(hasA && hasB);
+  const showWorkspace = $derived(hasBoth || forceSingle);
   const activeSide = $derived<'a' | 'b'>(viewMode === 'b' ? 'b' : 'a');
   const activeLayers = $derived(activeSide === 'b' ? slotB : slotA);
 
@@ -59,10 +63,21 @@
     const lb = slotB.find((l) => pairKey(l.classification) === key);
     return lb ? lb.visible : true;
   }
+  // Vector diff pairs: the actual A/B geometry + alignment offset, re-rendered each
+  // frame (crisp at any zoom). The class grid stays in pd.result for metrics/regions.
   const diffRenders = $derived(
     pairDiffs
       .filter((pd) => pairVisible(pd.key))
-      .map((pd) => ({ spec: pd.result.spec, classGrid: pd.result.classGrid })),
+      .map((pd) => {
+        const a = slotA.find((l) => pairKey(l.classification) === pd.key) ?? null;
+        const b = slotB.find((l) => pairKey(l.classification) === pd.key) ?? null;
+        return {
+          aImage: a?.image ?? null,
+          bImage: b?.image ?? null,
+          offsetX: pd.result.offset.x,
+          offsetY: pd.result.offset.y,
+        };
+      }),
   );
   const allRegions = $derived(
     pairDiffs
@@ -79,6 +94,20 @@
       { added: 0, removed: 0 },
     ),
   );
+
+  // Matched filenames per active layer: its own side + the counterpart side, so the
+  // sidebar shows which A and B files were paired together.
+  const layerFiles = $derived.by(() => {
+    const m = new Map<string, { a: string | null; b: string | null }>();
+    for (const l of activeLayers) {
+      const k = pairKey(l.classification);
+      m.set(l.id, {
+        a: slotA.find((x) => pairKey(x.classification) === k)?.fileName ?? null,
+        b: slotB.find((x) => pairKey(x.classification) === k)?.fileName ?? null,
+      });
+    }
+    return m;
+  });
 
   const toRender = (l: Layer) => ({ image: l.image, color: l.color, visible: l.visible });
   const viewerLayers = $derived.by(() => {
@@ -145,31 +174,47 @@
     void loadInto(side, Array.from(e.dataTransfer?.files ?? []));
   }
 
-  // Sidebar ops operate on the active project.
-  function updateActive(fn: (ls: Layer[]) => Layer[]) {
-    if (activeSide === 'a') slotA = fn(slotA);
-    else slotB = fn(slotB);
+  // Sidebar ops are keyed by layer pair (classification) and applied to BOTH
+  // projects, so visibility/color stay in sync across A/B and every view mode.
+  function updateBoth(fn: (ls: Layer[]) => Layer[]) {
+    slotA = fn(slotA);
+    slotB = fn(slotB);
+  }
+  function keyOfId(id: string): string | null {
+    const l = slotA.find((x) => x.id === id) ?? slotB.find((x) => x.id === id);
+    return l ? pairKey(l.classification) : null;
   }
   function toggle(id: string) {
-    updateActive((ls) => ls.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)));
+    const k = keyOfId(id);
+    if (!k) return;
+    const cur = slotA.find((x) => x.id === id) ?? slotB.find((x) => x.id === id);
+    const next = !(cur?.visible ?? true);
+    updateBoth((ls) =>
+      ls.map((l) => (pairKey(l.classification) === k ? { ...l, visible: next } : l)),
+    );
   }
   function setColor(id: string, color: string) {
-    updateActive((ls) => ls.map((l) => (l.id === id ? { ...l, color } : l)));
+    const k = keyOfId(id);
+    if (!k) return;
+    updateBoth((ls) => ls.map((l) => (pairKey(l.classification) === k ? { ...l, color } : l)));
   }
   function showOnly(id: string) {
-    updateActive((ls) => ls.map((l) => ({ ...l, visible: l.id === id })));
+    const k = keyOfId(id);
+    if (!k) return;
+    updateBoth((ls) => ls.map((l) => ({ ...l, visible: pairKey(l.classification) === k })));
   }
   function showAll() {
-    updateActive((ls) => ls.map((l) => ({ ...l, visible: true })));
+    updateBoth((ls) => ls.map((l) => ({ ...l, visible: true })));
   }
   function hideAll() {
-    updateActive((ls) => ls.map((l) => ({ ...l, visible: false })));
+    updateBoth((ls) => ls.map((l) => ({ ...l, visible: false })));
   }
   function invertVisibility() {
-    updateActive((ls) => ls.map((l) => ({ ...l, visible: !l.visible })));
+    updateBoth((ls) => ls.map((l) => ({ ...l, visible: !l.visible })));
   }
   function setType(id: string, type: LayerType) {
-    updateActive((ls) =>
+    // Reclassification targets one specific file → active side only.
+    const apply = (ls: Layer[]): Layer[] =>
       ls
         .map((l) =>
           l.id === id
@@ -187,8 +232,9 @@
               }
             : l,
         )
-        .sort((a, b) => layerSortIndex(a.classification) - layerSortIndex(b.classification)),
-    );
+        .sort((a, b) => layerSortIndex(a.classification) - layerSortIndex(b.classification));
+    if (activeSide === 'a') slotA = apply(slotA);
+    else slotB = apply(slotB);
     void recompute(); // re-pair + re-diff
   }
 
@@ -258,6 +304,7 @@
     pairDiffs = [];
     error = null;
     viewMode = 'a';
+    forceSingle = false;
   }
 </script>
 
@@ -327,9 +374,11 @@
   </header>
 
   <div class="main-area">
-    {#if hasProject}
+    {#if showWorkspace}
       <LayerList
         layers={activeLayers}
+        files={layerFiles}
+        dual={hasBoth}
         ontoggle={toggle}
         oncolor={setColor}
         onsolo={showOnly}
@@ -377,6 +426,14 @@
             </button>
           {/each}
         </div>
+        {#if hasA !== hasB}
+          <div class="continue-bar">
+            <span class="hint">Drop the second project to diff, or</span>
+            <button class="btn" data-testid="continue-single" onclick={() => (forceSingle = true)}>
+              Continue with project {hasA ? 'A' : 'B'} only →
+            </button>
+          </div>
+        {/if}
         {#if error}<p class="err drop-err" data-testid="error">⚠ {error}</p>{/if}
       </main>
     {/if}
@@ -525,7 +582,21 @@
     height: 100%;
     display: flex;
     gap: 1.5rem;
-    padding: 2rem;
+    padding: 2rem 2rem 4.5rem;
+  }
+  .continue-bar {
+    position: absolute;
+    bottom: 1.1rem;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+  }
+  .continue-bar .hint {
+    color: var(--text-dim);
+    font-size: 0.85rem;
   }
   .bigzone {
     flex: 1;

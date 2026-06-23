@@ -15,3 +15,4 @@ export * from './classify/index.js';
 export * from './raster/index.js';
 export * from './align/index.js';
 export * from './diff/index.js';
+export * from './contour/index.js';

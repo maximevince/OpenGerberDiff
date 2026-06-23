@@ -3,12 +3,16 @@
 
   interface Props {
     layers: Layer[];
+    /** Per-layer matched filenames (A side + B side). */
+    files?: Map<string, { a: string | null; b: string | null }>;
+    /** Two projects loaded → label filenames A/B. */
+    dual?: boolean;
     ontoggle: (id: string) => void;
     oncolor: (id: string, color: string) => void;
     onsolo?: (id: string) => void;
     oncontext?: (id: string, x: number, y: number) => void;
   }
-  let { layers, ontoggle, oncolor, onsolo, oncontext }: Props = $props();
+  let { layers, files, dual = false, ontoggle, oncolor, onsolo, oncontext }: Props = $props();
 </script>
 
 <div class="layers" data-testid="layer-list">
@@ -47,7 +51,17 @@
         />
         <button class="name" title="Solo this layer" onclick={() => onsolo?.(layer.id)}>
           <span class="display">{layer.displayName}</span>
-          <span class="file">{layer.fileName}</span>
+          {#if files?.get(layer.id)}
+            {@const f = files.get(layer.id)!}
+            {#if dual}
+              <span class="file" class:missing={!f.a}><span class="side">A</span>{f.a ?? '—'}</span>
+              <span class="file" class:missing={!f.b}><span class="side">B</span>{f.b ?? '—'}</span>
+            {:else}
+              <span class="file">{f.a ?? f.b ?? layer.fileName}</span>
+            {/if}
+          {:else}
+            <span class="file">{layer.fileName}</span>
+          {/if}
         </button>
         {#if layer.classification.source === 'fallback' || layer.classification.confidence < 0.4}
           <span class="warn" title="Low-confidence classification">?</span>
@@ -91,8 +105,8 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.6rem;
+    gap: 0.55rem;
+    padding: 0.5rem 0.6rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   }
   .row.hidden {
@@ -102,16 +116,25 @@
     background: none;
     border: none;
     color: var(--text);
-    width: 1.2rem;
-    font-size: 0.9rem;
+    width: 1.7rem;
+    height: 1.7rem;
+    flex: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .vis:hover {
+    background: rgba(255, 255, 255, 0.08);
   }
   .swatch {
-    width: 1.1rem;
-    height: 1.1rem;
+    width: 1.6rem;
+    height: 1.6rem;
+    flex: none;
     padding: 0;
     border: 1px solid var(--border);
-    border-radius: 3px;
+    border-radius: 4px;
     background: none;
+    cursor: pointer;
   }
   .name {
     flex: 1;
@@ -122,17 +145,33 @@
     color: var(--text);
     display: flex;
     flex-direction: column;
-    line-height: 1.15;
+    gap: 1px;
+    line-height: 1.2;
   }
   .display {
-    font-size: 0.85rem;
+    font-size: 0.9rem;
   }
   .file {
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     color: var(--text-dim);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .file.missing {
+    color: #e0703c;
+    font-style: italic;
+  }
+  .side {
+    display: inline-block;
+    width: 1rem;
+    margin-right: 0.25rem;
+    font-weight: 700;
+    color: var(--accent);
+    font-family: var(--mono);
+  }
+  .file.missing .side {
+    color: #e0703c;
   }
   .warn {
     color: #ffb454;
