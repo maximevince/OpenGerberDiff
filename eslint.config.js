@@ -26,4 +26,15 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    // The Electron main/preload are CommonJS by necessity (Electron entry points).
+    files: ['**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { ...globals.node },
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
 );

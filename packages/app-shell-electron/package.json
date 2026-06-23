@@ -1,0 +1,22 @@
+{
+  "name": "@ogd/app-shell-electron",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Optional minimal Electron desktop wrapper for OpenGerberDiff. Loads the UNMODIFIED app-web static build; the web app never imports Electron.",
+  "license": "GPL-3.0-or-later",
+  "author": "Maxime Vincent",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:linux": "electron-builder --linux",
+    "dist:all": "electron-builder --linux --mac --win"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  }
+}

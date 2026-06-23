@@ -1,0 +1,56 @@
+name: Electron installers
+
+# Builds desktop installers for all three OSes from the unmodified web build.
+# Runs on version tags; also manually dispatchable. Artifacts are uploaded (and,
+# on a tag, attached to the GitHub Release via electron-builder publish).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            args: --linux AppImage deb
+          - os: macos-latest
+            args: --mac dmg
+          - os: windows-latest
+            args: --win nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Produce the static web bundle the shell wraps (core + app-web).
+      - name: Build web app
+        run: pnpm build
+
+      - name: Build installer
+        working-directory: packages/app-shell-electron
+        run: pnpm exec electron-builder ${{ matrix.args }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            packages/app-shell-electron/dist/*.AppImage
+            packages/app-shell-electron/dist/*.deb
+            packages/app-shell-electron/dist/*.dmg
+            packages/app-shell-electron/dist/*.exe
+          if-no-files-found: ignore

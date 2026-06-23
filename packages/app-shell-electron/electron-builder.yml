@@ -1,0 +1,36 @@
+appId: be.veemax.opengerberdiff
+productName: OpenGerberDiff
+executableName: opengerberdiff
+copyright: © Maxime Vincent
+directories:
+  output: dist
+  buildResources: build
+# Only the shell's own files ship in the asar; the web build is added as a
+# resource (below) so the exact same static bundle runs in the browser and here.
+files:
+  - main.cjs
+  - preload.cjs
+  - package.json
+extraResources:
+  - from: ../app-web/build
+    to: web
+publish:
+  provider: github
+  owner: maximevince
+  repo: OpenGerberDiff
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  synopsis: Visual & quantitative diff for Gerber/Excellon PCB files
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
