@@ -14,7 +14,9 @@
     "e2e": "playwright test"
   },
   "dependencies": {
-    "@ogd/core": "workspace:*"
+    "@ogd/core": "workspace:*",
+    "comlink": "^4.4.2",
+    "fflate": "^0.8.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
@@ -25,6 +27,7 @@
     "svelte-check": "^4.1.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
+    "vite-plugin-node-polyfills": "^0.28.0",
     "vitest": "^2.1.8"
   }
 }

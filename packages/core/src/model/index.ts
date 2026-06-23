@@ -1,145 +1,112 @@
 /**
  * OGD core geometry model — the single contract every subsystem depends on.
  *
- * The parser adapter (`core/parse`) produces this from `@tracespace` output; the
- * rasterizer, diff, classifier, renderer, and report all consume ONLY this. The
- * parser is therefore swappable without downstream churn.
+ * The parser adapter (`core/parse`) produces this from `@tracespace` v4 plotter
+ * output; the rasterizer, diff, classifier, renderer, and report consume ONLY
+ * this. The parser is therefore swappable without downstream churn.
  *
- * Units: ALL coordinates/dimensions are normalized to **millimetres**. Display
- * units are a pure formatting concern handled in the UI.
+ * The model deliberately mirrors the plotter's "image graphics" abstraction
+ * (tool shapes + pads + strokes + fills, modulated by polarity) because that is
+ * already the natural input to a coverage rasterizer. Everything is normalized to
+ * **millimetres**; display units are a pure UI formatting concern.
  *
  * See docs/03-proposed-architecture.md §3.
  */
 
-// ---------------------------------------------------------------------------
-// Enums (string-literal unions — serializable across the worker boundary)
-// ---------------------------------------------------------------------------
-
-export type ApertureState = 'off' | 'on' | 'flash';
-
-export type Interpolation = 'linear' | 'cw' | 'ccw' | 'region_start' | 'region_end';
-
 export type Polarity = 'dark' | 'clear';
 
-export type ImagePolarity = 'positive' | 'negative';
-
-export type ZeroOmission = 'leading' | 'trailing' | 'explicit';
-
-export type CoordinateMode = 'absolute' | 'incremental';
-
-export type SourceFormat = 'gerber' | 'gerber-x2' | 'excellon';
-
 // ---------------------------------------------------------------------------
-// Apertures
+// Aperture shapes (a tool is a list of primitives; >1 / `layer` entries encode
+// macros and clears — e.g. a donut is [circle, layer(clear), circle]).
 // ---------------------------------------------------------------------------
 
-export interface CircleAperture {
+export interface CirclePrimitive {
   type: 'circle';
-  diameter: number;
-  holeDiameter?: number;
+  cx: number;
+  cy: number;
+  r: number;
 }
-export interface RectangleAperture {
-  type: 'rectangle';
+export interface RectPrimitive {
+  type: 'rect';
+  cx: number;
+  cy: number;
   width: number;
   height: number;
-  holeDiameter?: number;
+  /** Corner radius (obround when r === min(width,height)/2). */
+  r: number;
 }
-export interface ObroundAperture {
-  type: 'obround';
+export interface PolyPrimitive {
+  type: 'poly';
+  points: ReadonlyArray<readonly [number, number]>;
+}
+export interface RingPrimitive {
+  type: 'ring';
+  cx: number;
+  cy: number;
+  r: number;
   width: number;
-  height: number;
-  holeDiameter?: number;
 }
-export interface PolygonAperture {
-  type: 'polygon';
-  outerDiameter: number;
-  numVertices: number;
-  rotation: number;
-  holeDiameter?: number;
-}
-export interface MacroAperture {
-  type: 'macro';
-  /** Resolved macro primitive geometry, ready to stamp. */
-  primitives: MacroPrimitive[];
-}
-export interface BlockAperture {
-  type: 'block';
-  nets: Net[];
-  apertures: Map<number, Aperture>;
-  boundingBox: BoundingBox;
+/** Exposure toggle inside a shape list (macro clear regions). */
+export interface LayerPrimitive {
+  type: 'layer';
+  polarity: Polarity;
 }
 
-export type Aperture =
-  | CircleAperture
-  | RectangleAperture
-  | ObroundAperture
-  | PolygonAperture
-  | MacroAperture
-  | BlockAperture;
-
-/**
- * Flattened macro primitive (all coords in mm, exposure resolved). The adapter
- * evaluates macro expressions/variables so downstream code never re-parses.
- */
-export interface MacroPrimitive {
-  /** Whether this primitive adds (true) or clears (false) coverage. */
-  exposure: boolean;
-  /** Closed polygon outline in mm (already rotated/positioned). */
-  polygon: ReadonlyArray<readonly [number, number]>;
-}
+export type ShapePrimitive =
+  | CirclePrimitive
+  | RectPrimitive
+  | PolyPrimitive
+  | RingPrimitive
+  | LayerPrimitive;
 
 // ---------------------------------------------------------------------------
-// Nets (ordered draw operations)
+// Path segments (for strokes and region fills)
 // ---------------------------------------------------------------------------
 
+export interface LineSegment {
+  type: 'line';
+  start: readonly [number, number];
+  end: readonly [number, number];
+}
 export interface ArcSegment {
-  centerX: number;
-  centerY: number;
+  type: 'arc';
+  start: readonly [number, number];
+  end: readonly [number, number];
+  center: readonly [number, number];
   radius: number;
-  startAngleDeg: number;
-  endAngleDeg: number;
+  /** Sweep angle in radians (signed). */
+  sweep: number;
+  dir: 'cw' | 'ccw';
 }
+export type PathSegment = LineSegment | ArcSegment;
 
-export interface Net {
-  /** Stable id assigned by the adapter (for diff cross-referencing / hit-test). */
+// ---------------------------------------------------------------------------
+// Image graphics (the ordered draw operations)
+// ---------------------------------------------------------------------------
+
+export interface PadGraphic {
   id: number;
-  startX: number;
-  startY: number;
-  stopX: number;
-  stopY: number;
-  /** Key into `Image.apertures`. */
-  apertureIndex: number;
-  apertureState: ApertureState;
-  interpolation: Interpolation;
-  layerIndex: number;
-  netStateIndex: number;
-  arcSegment?: ArcSegment;
-  /** From Gerber %TO object attributes. */
-  attributes?: Record<string, string>;
-}
-
-// ---------------------------------------------------------------------------
-// Graphics-state snapshots
-// ---------------------------------------------------------------------------
-
-export interface StepAndRepeat {
+  kind: 'pad';
+  /** Key into `Image.tools`. */
+  tool: string;
   x: number;
   y: number;
-  distX: number;
-  distY: number;
-}
-
-export interface Layer {
   polarity: Polarity;
-  rotation: number;
-  name?: string;
-  stepAndRepeat: StepAndRepeat;
 }
-
-export interface NetState {
-  /** Original file unit (informational — coords are already mm). */
-  unitWasInch: boolean;
+export interface StrokeGraphic {
+  id: number;
+  kind: 'stroke';
+  width: number;
+  path: PathSegment[];
+  polarity: Polarity;
 }
+export interface FillGraphic {
+  id: number;
+  kind: 'fill';
+  path: PathSegment[];
+  polarity: Polarity;
+}
+export type Graphic = PadGraphic | StrokeGraphic | FillGraphic;
 
 // ---------------------------------------------------------------------------
 // Image (per-file parse result)
@@ -152,21 +119,7 @@ export interface BoundingBox {
   maxY: number;
 }
 
-export interface CoordinateFormat {
-  zeroOmission: ZeroOmission;
-  coordinateMode: CoordinateMode;
-  xInteger: number;
-  xDecimal: number;
-  yInteger: number;
-  yDecimal: number;
-}
-
-export interface ImageInfo {
-  polarity: ImagePolarity;
-  rotation: number;
-  name?: string;
-  attributes?: Record<string, string>;
-}
+export type SourceFormat = 'gerber' | 'drill';
 
 export interface ImageSource {
   fileName: string;
@@ -176,10 +129,11 @@ export interface ImageSource {
 }
 
 export interface ImageStats {
-  netCount: number;
-  flashCount: number;
-  regionCount: number;
-  /** Total copper area in mm² (precomputed during scan-conversion). */
+  graphicCount: number;
+  padCount: number;
+  strokeCount: number;
+  fillCount: number;
+  /** Total copper area in mm² (computed by the rasterizer; 0 until then). */
   copperAreaMm2: number;
 }
 
@@ -193,12 +147,10 @@ export interface Diagnostic {
 
 export interface Image {
   source: ImageSource;
-  format: CoordinateFormat;
-  info: ImageInfo;
-  apertures: Map<number, Aperture>;
-  nets: Net[];
-  layers: Layer[];
-  netStates: NetState[];
+  /** Always 'mm' — the model is unit-normalized. */
+  units: 'mm';
+  tools: Map<string, ShapePrimitive[]>;
+  graphics: Graphic[];
   boundingBox: BoundingBox;
   stats: ImageStats;
 }
@@ -241,4 +193,12 @@ export function unionBoundingBox(a: BoundingBox, b: BoundingBox): BoundingBox {
     maxX: Math.max(a.maxX, b.maxX),
     maxY: Math.max(a.maxY, b.maxY),
   };
+}
+
+export function boundingBoxWidth(b: BoundingBox): number {
+  return isFiniteBoundingBox(b) ? b.maxX - b.minX : 0;
+}
+
+export function boundingBoxHeight(b: BoundingBox): number {
+  return isFiniteBoundingBox(b) ? b.maxY - b.minY : 0;
 }

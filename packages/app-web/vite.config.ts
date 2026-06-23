@@ -1,4 +1,5 @@
 import { sveltekit } from '@sveltejs/kit/vite';
+import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import {
   defineConfig,
   type Connect,
@@ -34,6 +35,17 @@ function crossOriginIsolation(): Plugin {
   };
 }
 
+// `@tracespace` v4 parser/plotter depend on `readable-stream`, which expects Node
+// globals (Buffer/process/stream). Polyfill them for the browser bundle — and,
+// crucially, for the parse worker (Vite builds workers with a SEPARATE plugin
+// pipeline, so the polyfill must be registered under `worker.plugins` too).
+const polyfills = () =>
+  nodePolyfills({
+    include: ['buffer', 'process', 'stream', 'util', 'events', 'string_decoder'],
+    globals: { Buffer: true, process: true, global: true },
+  });
+
 export default defineConfig({
-  plugins: [crossOriginIsolation(), sveltekit()],
+  plugins: [polyfills(), crossOriginIsolation(), sveltekit()],
+  worker: { format: 'es', plugins: () => [polyfills()] },
 });
