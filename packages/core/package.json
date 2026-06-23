@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "OGD core — pure-TS parse adapter, geometry model, rasterizer, diff, classify, align, report. No DOM/canvas/Node-fs.",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

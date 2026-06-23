@@ -1,6 +1,7 @@
 <script lang="ts" module>
   // App provenance + attribution, shared by the About dialog and the status bar.
   export const REPO_URL = 'https://github.com/maximevince/OpenGerberDiff';
+  export const LICENSE_URL = 'https://github.com/maximevince/OpenGerberDiff/blob/main/LICENSE';
   export const AUTHOR = 'Maxime Vincent';
   export const AUTHOR_URL = 'https://github.com/maximevince';
   export const VERSION = __APP_VERSION__;
@@ -93,7 +94,8 @@
           <span class="dim">· {BUILD_DATE}</span>
         </div>
         <div class="links">
-          <span class="dim">MIT License · by</span>
+          <a href={LICENSE_URL} target="_blank" rel="noopener noreferrer">GPL-3.0</a>
+          <span class="dim">· by</span>
           <a href={AUTHOR_URL} target="_blank" rel="noopener noreferrer">{AUTHOR}</a>
           <a class="repo" href={REPO_URL} target="_blank" rel="noopener noreferrer">
             GitHub repo ↗

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Mirror CI locally before a push so type/lint breakage is caught here, not in CI.
+# Enable once per clone:  git config core.hooksPath .githooks
+# Bypass for a one-off:    git push --no-verify
+set -e
+
+echo "[pre-push] building @ogd/core (provides @ogd/core types/JS to app-web)…"
+pnpm --filter @ogd/core build
+
+echo "[pre-push] lint…"
+pnpm lint
+
+echo "[pre-push] typecheck…"
+pnpm typecheck
+
+echo "[pre-push] OK"

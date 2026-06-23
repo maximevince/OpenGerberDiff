@@ -22,6 +22,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # app-web resolves @ogd/core via its built dist (types + JS), so core must be
+      # built before typecheck/test — mirrors the ordering in the root `build` script.
+      - name: Build core
+        run: pnpm --filter @ogd/core build
+
       - name: Typecheck
         run: pnpm typecheck
 
