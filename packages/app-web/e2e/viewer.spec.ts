@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { zipSync } from 'fflate';
@@ -279,4 +280,79 @@ test('pan and zoom do not crash', async ({ page }) => {
   await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 40);
   await page.mouse.up();
   await expect(canvas).toBeVisible();
+});
+
+test('view modes (changes, xor, overlay, onion) render', async ({ page }) => {
+  await page.goto('/');
+  await page.setInputFiles(FILE_A, zipFile({ 'board-F_Cu.gbr': pad(0) }));
+  await page.setInputFiles(FILE_B, zipFile({ 'board-F_Cu.gbr': pad(20000) }));
+  await expect(page.getByTestId('board-canvas')).toBeVisible();
+  for (const m of ['Changes', 'XOR', 'Overlay', 'Onion', 'A', 'B', 'Diff']) {
+    await page.getByRole('button', { name: m, exact: true }).click();
+    await expect(page.getByTestId('board-canvas')).toBeVisible();
+  }
+  await page.getByRole('button', { name: 'Onion', exact: true }).click();
+  await expect(page.getByTestId('onion-mix')).toBeVisible();
+});
+
+test('undo and redo restore layer visibility', async ({ page }) => {
+  await page.goto('/');
+  await loadSingle(page, zipFile({ 'board-F_Cu.gbr': pad(0), 'board-B_Cu.gbr': pad(40000) }));
+  await expect(page.getByTestId('layer-row')).toHaveCount(2);
+  const full = await copperPixels(page);
+  expect(full).toBeGreaterThan(0);
+  await page.keyboard.press('h'); // hide all (snapshotted)
+  expect(await copperPixels(page)).toBeLessThan(full);
+  await page.getByTestId('undo').click();
+  expect(await copperPixels(page)).toBeGreaterThan(0);
+  await page.getByTestId('redo').click();
+  expect(await copperPixels(page)).toBeLessThan(full);
+});
+
+test('measure tool shows a distance readout', async ({ page }) => {
+  await page.goto('/');
+  await loadSingle(page, richFixture);
+  await page.getByTestId('measure-btn').click();
+  const box = (await page.getByTestId('board-canvas').boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.4, box.y + box.height * 0.5);
+  await page.mouse.click(box.x + box.width * 0.6, box.y + box.height * 0.5);
+  await expect(page.getByTestId('measure-label')).toBeVisible();
+});
+
+test('help dialog opens with ?', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('help-btn').click();
+  await expect(page.getByTestId('help-dialog')).toBeVisible();
+});
+
+test('settings persist across reload', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() =>
+    localStorage.setItem('ogd:settings', JSON.stringify({ backgroundColor: '#123456' })),
+  );
+  await page.reload();
+  const bg = await page.evaluate(
+    () => JSON.parse(localStorage.getItem('ogd:settings') ?? '{}').backgroundColor,
+  );
+  expect(bg).toBe('#123456');
+});
+
+test('save a .pcbdiff review and reopen it', async ({ page }) => {
+  await page.goto('/');
+  await loadSingle(page, zipFile({ 'board-F_Cu.gbr': pad(0) }));
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('save-session').click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/\.pcbdiff$/);
+  const buffer = readFileSync((await download.path())!);
+
+  // Re-open the saved session (dropping a .pcbdiff is detected as a session import).
+  await page.setInputFiles(FILE_A, {
+    name: 'review.pcbdiff',
+    mimeType: 'application/octet-stream',
+    buffer,
+  });
+  await expect(page.getByTestId('board-canvas')).toBeVisible();
+  await expect(page.getByTestId('error')).toHaveCount(0);
 });

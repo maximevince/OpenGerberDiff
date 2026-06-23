@@ -10,6 +10,8 @@ export interface RenderLayer {
   image: Image;
   color: string;
   visible: boolean;
+  /** 0..1; used by onion-skin to blend A and B. Defaults to 1. */
+  opacity?: number;
 }
 
 const TWO_PI = Math.PI * 2;
@@ -223,6 +225,9 @@ export function renderLayers(
   for (const layer of layers) {
     if (!layer.visible) continue;
     const comp = compiledFor(layer.image);
+    const alpha = layer.opacity ?? 1;
+    if (alpha <= 0) continue;
+    ctx.globalAlpha = alpha;
     if (comp.hasClear) {
       // Isolate clear-polarity on an offscreen so it only erases within the layer.
       off ??= getOffscreen(vp.width, vp.height);
@@ -238,6 +243,7 @@ export function renderLayers(
       ctx.setTransform(vp.zoom, 0, 0, -vp.zoom, vp.panX, vp.panY);
       drawCompiled(ctx, comp, layer.color);
     }
+    ctx.globalAlpha = 1;
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -269,12 +275,23 @@ const ADDED_FILL = 'rgba(44, 127, 184, 1)';
 const REMOVED_FILL = 'rgba(230, 119, 46, 1)';
 const COMMON_FILL = 'rgba(128, 132, 150, 0.5)';
 
+export interface DiffRenderOptions {
+  /** Draw the faint A∩B context (default true). 'changes'/'xor' modes disable it. */
+  showCommon?: boolean;
+  /** If set, paint every change (added + removed) in this one color — the xor view. */
+  mono?: string | null;
+}
+
 export function renderDiff(
   ctx: CanvasRenderingContext2D,
   pairs: DiffPair[],
   vp: Viewport,
   background: string,
+  opts: DiffRenderOptions = {},
 ): void {
+  const showCommon = opts.showCommon ?? true;
+  const mono = opts.mono ?? null;
+
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.clearRect(0, 0, vp.width, vp.height);
@@ -286,10 +303,11 @@ export function renderDiff(
   for (const p of pairs) {
     renderMask(mA, p.aImage, vp, 0, 0);
     renderMask(mB, p.bImage, vp, p.offsetX, p.offsetY);
-    // common first (faint), then the changes on top.
-    blitClass(ctx, scratch, mA.canvas, mB.canvas, 'destination-in', COMMON_FILL, vp);
-    blitClass(ctx, scratch, mA.canvas, mB.canvas, 'destination-out', REMOVED_FILL, vp);
-    blitClass(ctx, scratch, mB.canvas, mA.canvas, 'destination-out', ADDED_FILL, vp);
+    if (showCommon && !mono) {
+      blitClass(ctx, scratch, mA.canvas, mB.canvas, 'destination-in', COMMON_FILL, vp);
+    }
+    blitClass(ctx, scratch, mA.canvas, mB.canvas, 'destination-out', mono ?? REMOVED_FILL, vp);
+    blitClass(ctx, scratch, mB.canvas, mA.canvas, 'destination-out', mono ?? ADDED_FILL, vp);
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
