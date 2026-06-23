@@ -6,8 +6,9 @@
     ontoggle: (id: string) => void;
     oncolor: (id: string, color: string) => void;
     onsolo?: (id: string) => void;
+    oncontext?: (id: string, x: number, y: number) => void;
   }
-  let { layers, ontoggle, oncolor, onsolo }: Props = $props();
+  let { layers, ontoggle, oncolor, onsolo, oncontext }: Props = $props();
 </script>
 
 <div class="layers" data-testid="layer-list">
@@ -17,7 +18,17 @@
   </div>
   <ul>
     {#each layers as layer (layer.id)}
-      <li class="row" class:hidden={!layer.visible} data-testid="layer-row">
+      <li
+        class="row"
+        class:hidden={!layer.visible}
+        data-testid="layer-row"
+        oncontextmenu={(e) => {
+          if (oncontext) {
+            e.preventDefault();
+            oncontext(layer.id, e.clientX, e.clientY);
+          }
+        }}
+      >
         <button
           class="vis"
           title={layer.visible ? 'Hide layer' : 'Show layer'}

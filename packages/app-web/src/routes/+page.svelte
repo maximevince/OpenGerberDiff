@@ -1,8 +1,26 @@
 <script lang="ts">
+  import {
+    LAYER_TYPE_COLOR,
+    LAYER_TYPE_LABEL,
+    layerSortIndex,
+    type LayerSide,
+    type LayerType,
+  } from '@ogd/core';
   import Viewer from '$lib/components/Viewer.svelte';
   import LayerList from '$lib/components/LayerList.svelte';
+  import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
   import { loadProject, type Layer } from '$lib/project';
   import { settings } from '$lib/stores/settings';
+
+  const ALL_TYPES = Object.keys(LAYER_TYPE_LABEL) as LayerType[];
+
+  function sideForType(t: LayerType): LayerSide {
+    if (t.startsWith('top')) return 'top';
+    if (t.startsWith('bottom')) return 'bottom';
+    if (t === 'innerCopper') return 'inner';
+    if (t === 'other') return 'unknown';
+    return 'all';
+  }
 
   let layers = $state<Layer[]>([]);
   let projectName = $state<string | null>(null);
@@ -55,10 +73,82 @@
   function setColor(id: string, color: string) {
     layers = layers.map((l) => (l.id === id ? { ...l, color } : l));
   }
-  function solo(id: string) {
-    const onlyThis =
-      layers.filter((l) => l.visible).length === 1 && layers.find((l) => l.id === id)?.visible;
-    layers = layers.map((l) => ({ ...l, visible: onlyThis ? true : l.id === id }));
+  function showOnly(id: string) {
+    layers = layers.map((l) => ({ ...l, visible: l.id === id }));
+  }
+  function showAll() {
+    layers = layers.map((l) => ({ ...l, visible: true }));
+  }
+  function hideAll() {
+    layers = layers.map((l) => ({ ...l, visible: false }));
+  }
+  function invertVisibility() {
+    layers = layers.map((l) => ({ ...l, visible: !l.visible }));
+  }
+  function setType(id: string, type: LayerType) {
+    layers = layers
+      .map((l) =>
+        l.id === id
+          ? {
+              ...l,
+              classification: {
+                ...l.classification,
+                type,
+                side: sideForType(type),
+                source: 'filename' as const,
+                confidence: 1,
+              },
+              displayName: LAYER_TYPE_LABEL[type],
+              color: LAYER_TYPE_COLOR[type],
+            }
+          : l,
+      )
+      .sort((a, b) => layerSortIndex(a.classification) - layerSortIndex(b.classification));
+  }
+
+  let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+  function openMenu(id: string, x: number, y: number) {
+    const layer = layers.find((l) => l.id === id);
+    if (!layer) return;
+    menu = {
+      x,
+      y,
+      items: [
+        { label: 'Show Only This Layer', action: () => showOnly(id) },
+        { label: layer.visible ? 'Hide This Layer' : 'Show This Layer', action: () => toggle(id) },
+        { separator: true },
+        { label: 'Show All Layers', action: showAll },
+        { label: 'Hide All Layers', action: hideAll },
+        { label: 'Invert Visibility', action: invertVisibility },
+        { separator: true },
+        {
+          label: 'Set Layer Type',
+          children: ALL_TYPES.map((t) => ({
+            label: LAYER_TYPE_LABEL[t],
+            swatch: LAYER_TYPE_COLOR[t],
+            action: () => setType(id, t),
+          })),
+        },
+        {
+          label: 'Reset Color',
+          action: () => setColor(id, LAYER_TYPE_COLOR[layer.classification.type]),
+        },
+      ],
+    };
+  }
+
+  function onWindowKey(e: KeyboardEvent) {
+    if (!hasProject) return;
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.key === 'a' || e.key === 'A') showAll();
+    else if (e.key === 'h' || e.key === 'H') hideAll();
+    else if (e.key === 'i' || e.key === 'I') invertVisibility();
+    else if (/^[1-9]$/.test(e.key)) {
+      const idx = parseInt(e.key, 10) - 1;
+      if (idx < layers.length) toggle(layers[idx]!.id);
+    }
   }
 
   function reset() {
@@ -68,6 +158,12 @@
     error = null;
   }
 </script>
+
+<svelte:window onkeydown={onWindowKey} />
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
+{/if}
 
 <div
   class="app"
@@ -92,7 +188,13 @@
 
   <div class="main-area">
     {#if hasProject}
-      <LayerList {layers} ontoggle={toggle} oncolor={setColor} onsolo={solo} />
+      <LayerList
+        {layers}
+        ontoggle={toggle}
+        oncolor={setColor}
+        onsolo={showOnly}
+        oncontext={openMenu}
+      />
     {/if}
     <main class="view-area">
       {#if hasProject}

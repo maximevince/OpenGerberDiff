@@ -9,7 +9,9 @@ const disjointFixture = fileURLToPath(new URL('./fixtures/disjoint.gbr', import.
 
 /** Count canvas pixels that differ clearly from the dark navy background. */
 async function copperPixels(page: Page): Promise<number> {
-  return page.evaluate(() => {
+  return page.evaluate(async () => {
+    // Redraws are throttled to requestAnimationFrame; wait for the pending frame.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     const c = document.querySelector('[data-testid=board-canvas]') as HTMLCanvasElement;
     const { data } = c.getContext('2d')!.getImageData(0, 0, c.width, c.height);
     let n = 0;
@@ -95,13 +97,69 @@ test('toggling a layer visibility changes what is drawn', async ({ page }) => {
   expect(after).toBeLessThan(before);
 });
 
+test('layer right-click context menu: show-only and reassign type', async ({ page }) => {
+  const pad = (x: number) =>
+    Buffer.from(
+      ['%FSLAX24Y24*%', '%MOMM*%', '%ADD10C,2*%', 'D10*', `X${x}Y0D03*`, 'M02*', ''].join('\n'),
+    );
+  // "mystery.gbr" has no recognizable name -> classifies as Other; we reassign it.
+  const zip = zipSync({
+    'board-F_Cu.gbr': new Uint8Array(pad(0)),
+    'board-B_Cu.gbr': new Uint8Array(pad(20000)),
+    'mystery.gbr': new Uint8Array(pad(40000)),
+  });
+  await page.goto('/');
+  await page.setInputFiles('input[type=file]', {
+    name: 'p.zip',
+    mimeType: 'application/zip',
+    buffer: Buffer.from(zip),
+  });
+  await expect(page.getByTestId('layer-row')).toHaveCount(3);
+
+  // Right-click the first layer row -> "Show Only This Layer"
+  await page.getByTestId('layer-row').first().click({ button: 'right' });
+  await expect(page.getByTestId('context-menu')).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Show Only This Layer' }).click();
+  await expect(page.getByText('1 visible')).toBeVisible();
+
+  // Reassign "mystery.gbr" (currently Other) to Bottom Silkscreen via submenu
+  await expect(page.getByText('Other')).toBeVisible();
+  await page.getByText('mystery.gbr').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Set Layer Type' }).click();
+  await page.getByRole('menuitem', { name: 'Bottom Silkscreen', exact: true }).click();
+  await expect(page.getByText('Bottom Silkscreen')).toBeVisible();
+  await expect(page.getByText('Other')).toHaveCount(0);
+});
+
+test('keyboard shortcut H hides all layers', async ({ page }) => {
+  const pad = Buffer.from(
+    ['%FSLAX24Y24*%', '%MOMM*%', '%ADD10C,2*%', 'D10*', 'X0Y0D03*', 'M02*', ''].join('\n'),
+  );
+  const zip = zipSync({
+    'board-F_Cu.gbr': new Uint8Array(pad),
+    'board-B_Cu.gbr': new Uint8Array(pad),
+  });
+  await page.goto('/');
+  await page.setInputFiles('input[type=file]', {
+    name: 'p.zip',
+    mimeType: 'application/zip',
+    buffer: Buffer.from(zip),
+  });
+  await expect(page.getByTestId('layer-row')).toHaveCount(2);
+  await page.keyboard.press('h');
+  await expect(page.getByText('0 visible')).toBeVisible();
+  await page.keyboard.press('a');
+  await expect(page.getByText('2 visible')).toBeVisible();
+});
+
 test('disjoint traces sharing a tool do not bridge across the board', async ({ page }) => {
   await page.goto('/');
   await page.setInputFiles('input[type=file]', disjointFixture);
   await expect(page.getByTestId('board-canvas')).toBeVisible();
   await expect(page.getByTestId('error')).toHaveCount(0);
 
-  const ratio = await page.evaluate(() => {
+  const ratio = await page.evaluate(async () => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     const c = document.querySelector('[data-testid=board-canvas]') as HTMLCanvasElement;
     const { data, width, height } = c.getContext('2d')!.getImageData(0, 0, c.width, c.height);
     let copperRows = 0;

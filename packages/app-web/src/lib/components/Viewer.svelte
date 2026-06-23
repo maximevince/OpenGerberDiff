@@ -25,11 +25,22 @@
 
   function deviceSize(): { w: number; h: number } {
     if (!container) return { w: 1, h: 1 };
-    dpr = window.devicePixelRatio || 1;
+    // Cap DPR at 2 to bound fill cost on HiDPI displays.
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
     return {
-      w: Math.max(1, container.clientWidth * dpr),
-      h: Math.max(1, container.clientHeight * dpr),
+      w: Math.max(1, Math.round(container.clientWidth * dpr)),
+      h: Math.max(1, Math.round(container.clientHeight * dpr)),
     };
+  }
+
+  // Coalesce bursts of pan/zoom updates into one draw per animation frame.
+  let rafId = 0;
+  function scheduleDraw() {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      draw();
+    });
   }
 
   function visibleBounds(): BoundingBox {
@@ -65,12 +76,16 @@
     fit();
   });
 
-  // Redraw on layer/visibility/color/viewport change.
+  // Redraw on layer/visibility/color/viewport change (throttled to one per frame).
   $effect(() => {
     void layers;
     void background;
     void vp;
-    draw();
+    scheduleDraw();
+  });
+
+  $effect(() => () => {
+    if (rafId) cancelAnimationFrame(rafId);
   });
 
   $effect(() => {
@@ -79,7 +94,7 @@
       const { w, h } = deviceSize();
       if (vp) vp = { ...vp, width: w, height: h };
       else fit();
-      draw();
+      scheduleDraw();
     });
     ro.observe(container);
     return () => ro.disconnect();
