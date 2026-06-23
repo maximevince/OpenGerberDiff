@@ -5,17 +5,35 @@
     unionBoundingBox,
     type BoundingBox,
   } from '@ogd/core';
-  import { renderLayers, type RenderLayer } from '$lib/render/canvas2d';
+  import {
+    renderDiff,
+    renderLayers,
+    type DiffRender,
+    type RenderLayer,
+  } from '$lib/render/canvas2d';
   import { fitView, panBy, zoomAbout, type Viewport } from '$lib/render/viewport';
 
   interface Props {
-    /** Layers in top-first order (rendered bottom-first). */
+    /** Layers in top-first order (rendered bottom-first) — also used for framing. */
     layers: RenderLayer[];
+    mode?: 'layers' | 'diff';
+    diffs?: DiffRender[];
     background?: string;
-    /** Change this to trigger a re-fit (e.g. when a new project loads). */
+    /** Change to trigger a re-fit (e.g. when a new project loads). */
     fitKey?: unknown;
+    /** Box to zoom to (e.g. a change region); bump focusKey to apply. */
+    focusBox?: BoundingBox | null;
+    focusKey?: unknown;
   }
-  let { layers, background = '#1a1a2e', fitKey = undefined }: Props = $props();
+  let {
+    layers,
+    mode = 'layers',
+    diffs = [],
+    background = '#1a1a2e',
+    fitKey = undefined,
+    focusBox = null,
+    focusKey = undefined,
+  }: Props = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let container: HTMLDivElement | undefined = $state();
@@ -25,22 +43,11 @@
 
   function deviceSize(): { w: number; h: number } {
     if (!container) return { w: 1, h: 1 };
-    // Cap DPR at 2 to bound fill cost on HiDPI displays.
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     return {
       w: Math.max(1, Math.round(container.clientWidth * dpr)),
       h: Math.max(1, Math.round(container.clientHeight * dpr)),
     };
-  }
-
-  // Coalesce bursts of pan/zoom updates into one draw per animation frame.
-  let rafId = 0;
-  function scheduleDraw() {
-    if (rafId) return;
-    rafId = requestAnimationFrame(() => {
-      rafId = 0;
-      draw();
-    });
   }
 
   function visibleBounds(): BoundingBox {
@@ -58,6 +65,15 @@
     vp = fitView(visibleBounds(), w, h);
   }
 
+  let rafId = 0;
+  function scheduleDraw() {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      draw();
+    });
+  }
+
   function draw() {
     if (!canvas || !vp) return;
     const ctx = canvas.getContext('2d');
@@ -66,19 +82,28 @@
       canvas.width = vp.width;
       canvas.height = vp.height;
     }
-    // Render bottom-first (layers come in top-first order).
-    renderLayers(ctx, layers.slice().reverse(), vp, background);
+    if (mode === 'diff') renderDiff(ctx, diffs, vp, background);
+    else renderLayers(ctx, layers.slice().reverse(), vp, background);
   }
 
-  // Re-fit only when the project identity changes.
   $effect(() => {
     void fitKey;
     fit();
   });
 
-  // Redraw on layer/visibility/color/viewport change (throttled to one per frame).
+  // Focus on a region.
+  $effect(() => {
+    void focusKey;
+    if (focusBox && isFiniteBoundingBox(focusBox)) {
+      const { w, h } = deviceSize();
+      vp = fitView(focusBox, w, h, 0.5);
+    }
+  });
+
   $effect(() => {
     void layers;
+    void diffs;
+    void mode;
     void background;
     void vp;
     scheduleDraw();

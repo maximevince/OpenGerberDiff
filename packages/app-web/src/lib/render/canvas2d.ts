@@ -1,5 +1,13 @@
-import type { Image, PathSegment, ShapePrimitive } from '@ogd/core';
-import type { Viewport } from './viewport.js';
+import {
+  ADDED,
+  COMMON,
+  REMOVED,
+  type GridSpec,
+  type Image,
+  type PathSegment,
+  type ShapePrimitive,
+} from '@ogd/core';
+import { worldToScreen, type Viewport } from './viewport.js';
 
 export interface RenderStyle {
   background: string;
@@ -241,6 +249,77 @@ export function renderLayers(
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'destination-over';
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, vp.width, vp.height);
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// ---------------------------------------------------------------------------
+// Diff rendering — paint per-cell class grids (added / removed / common).
+// ---------------------------------------------------------------------------
+
+export interface DiffRender {
+  spec: GridSpec;
+  classGrid: Uint8Array;
+}
+
+// Colorblind-safe palette (blue added / orange removed).
+const PALETTE: Record<number, [number, number, number, number]> = {
+  [ADDED]: [44, 127, 184, 255],
+  [REMOVED]: [230, 119, 46, 255],
+  [COMMON]: [128, 132, 150, 70],
+};
+
+const diffCanvasCache = new WeakMap<Uint8Array, HTMLCanvasElement | OffscreenCanvas>();
+
+function diffCanvas(spec: GridSpec, classGrid: Uint8Array): HTMLCanvasElement | OffscreenCanvas {
+  let canvas = diffCanvasCache.get(classGrid);
+  if (canvas) return canvas;
+  const { cols, rows } = spec;
+  canvas =
+    typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(cols, rows)
+      : Object.assign(document.createElement('canvas'), { width: cols, height: rows });
+  const ctx = canvas.getContext('2d') as unknown as CanvasRenderingContext2D;
+  const img = ctx.createImageData(cols, rows);
+  const d = img.data;
+  for (let row = 0; row < rows; row++) {
+    const srcRow = rows - 1 - row; // flip Y so image row 0 = top (max world Y)
+    for (let col = 0; col < cols; col++) {
+      const cls = classGrid[srcRow * cols + col]!;
+      const rgba = PALETTE[cls];
+      if (!rgba) continue;
+      const di = (row * cols + col) * 4;
+      d[di] = rgba[0];
+      d[di + 1] = rgba[1];
+      d[di + 2] = rgba[2];
+      d[di + 3] = rgba[3];
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  diffCanvasCache.set(classGrid, canvas);
+  return canvas;
+}
+
+export function renderDiff(
+  ctx: CanvasRenderingContext2D,
+  diffs: DiffRender[],
+  vp: Viewport,
+  background: string,
+): void {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0, 0, vp.width, vp.height);
+  ctx.imageSmoothingEnabled = false;
+
+  for (const diff of diffs) {
+    const { spec } = diff;
+    const [x0, y0] = worldToScreen(vp, spec.originX, spec.originY + spec.rows * spec.cellSize);
+    const [x1, y1] = worldToScreen(vp, spec.originX + spec.cols * spec.cellSize, spec.originY);
+    ctx.drawImage(diffCanvas(spec, diff.classGrid), x0, y0, x1 - x0, y1 - y0);
+  }
+
   ctx.globalCompositeOperation = 'destination-over';
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, vp.width, vp.height);
