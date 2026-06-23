@@ -101,6 +101,48 @@ test('keyboard H/A toggle all layer visibility', async ({ page }) => {
   expect(await copperPixels(page)).toBeGreaterThan(0);
 });
 
+test('empty screen shows big A and B dropzones', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('bigdrop-a')).toBeVisible();
+  await expect(page.getByTestId('bigdrop-b')).toBeVisible();
+});
+
+test('diff mode respects per-layer visibility', async ({ page }) => {
+  const gb = (lines: string[]) => new Uint8Array(Buffer.from(lines.join('\n') + '\n'));
+  const one = (x: number, y: number) =>
+    gb(['%FSLAX24Y24*%', '%MOMM*%', '%ADD10C,4*%', 'D10*', `X${x}Y${y}D03*`, 'M02*']);
+  const two = (a: [number, number], b: [number, number]) =>
+    gb([
+      '%FSLAX24Y24*%',
+      '%MOMM*%',
+      '%ADD10C,4*%',
+      'D10*',
+      `X${a[0]}Y${a[1]}D03*`,
+      `X${b[0]}Y${b[1]}D03*`,
+      'M02*',
+    ]);
+
+  await page.goto('/');
+  await page.setInputFiles(
+    FILE_A,
+    zipFile({ 'board-F_Cu.gbr': one(0, 0), 'board-B_Cu.gbr': one(0, 0) }),
+  );
+  await page.setInputFiles(
+    FILE_B,
+    zipFile({
+      'board-F_Cu.gbr': two([0, 0], [400000, 0]), // F_Cu adds a pad to the right
+      'board-B_Cu.gbr': two([0, 0], [0, 400000]), // B_Cu adds a pad upward
+    }),
+  );
+  await expect(page.getByTestId('diff-summary')).toBeVisible();
+  await expect(page.getByTestId('total-regions')).toHaveText('2', { timeout: 10_000 });
+
+  const before = await copperPixels(page);
+  // hide the first layer (Top Copper) — its change region should disappear
+  await page.locator('[data-testid=layer-row] .vis').first().click();
+  expect(await copperPixels(page)).toBeLessThan(before);
+});
+
 test('A vs B diff: summary, totals and region navigation', async ({ page }) => {
   await page.goto('/');
   // A: one copper pad. B: same pad + an extra pad => added copper.

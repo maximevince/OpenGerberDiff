@@ -17,7 +17,7 @@ export interface PairDiff {
   result: DiffResult;
 }
 
-function keyOf(c: Classification): string {
+export function pairKey(c: Classification): string {
   return c.type === 'innerCopper' ? `inner:${c.innerIndex ?? 0}` : c.type;
 }
 
@@ -31,7 +31,7 @@ function labelOf(c: Classification): string {
 export function matchLayers(a: Layer[], b: Layer[]): LayerPair[] {
   const pairs = new Map<string, LayerPair>();
   const take = (layer: Layer, side: 'a' | 'b') => {
-    const key = keyOf(layer.classification);
+    const key = pairKey(layer.classification);
     let p = pairs.get(key);
     if (!p) {
       p = {
@@ -64,12 +64,18 @@ function getWorker(): Comlink.Remote<DiffWorkerApi> {
 }
 
 /** Diff every matched layer pair (both sides present) in the worker. */
-export async function runDiffs(pairs: LayerPair[]): Promise<PairDiff[]> {
+export async function runDiffs(
+  pairs: LayerPair[],
+  onProgress?: (done: number, total: number, label: string) => void,
+): Promise<PairDiff[]> {
   const both = pairs.filter((p) => p.a && p.b);
   const out: PairDiff[] = [];
+  let done = 0;
   for (const p of both) {
+    onProgress?.(done, both.length, p.label);
     const result = await getWorker().diff(p.a!.image, p.b!.image, { align: 'auto' });
     out.push({ key: p.key, label: p.label, result });
+    onProgress?.(++done, both.length, p.label);
   }
   return out;
 }

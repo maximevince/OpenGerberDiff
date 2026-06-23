@@ -35,7 +35,11 @@ function displayName(c: Classification): string {
 }
 
 /** Expand, parse, classify and order every layer in a set of dropped files. */
-export async function loadProject(files: File[], name = 'Project'): Promise<Project> {
+export async function loadProject(
+  files: File[],
+  name = 'Project',
+  onProgress?: (done: number, total: number, label: string) => void,
+): Promise<Project> {
   const raws: RawFile[] = (await Promise.all(files.map(expandFile))).flat();
 
   const jobFile = raws.find((r) => r.name.toLowerCase().endsWith('.gbrjob'));
@@ -46,10 +50,13 @@ export async function loadProject(files: File[], name = 'Project'): Promise<Proj
     .filter((r) => !looksLikeGerber(r.name) && !r.name.toLowerCase().endsWith('.gbrjob'))
     .map((r) => r.name);
 
+  let done = 0;
+  onProgress?.(0, candidates.length, 'parsing');
   const layers: Layer[] = await Promise.all(
     candidates.map(async (raw) => {
       const fn = gbrjob?.get(raw.name) ?? gbrjob?.get(`./${raw.name}`);
       const res = await parseRawFile(raw, fn);
+      onProgress?.(++done, candidates.length, raw.name);
       return {
         id: raw.name,
         fileName: raw.name,

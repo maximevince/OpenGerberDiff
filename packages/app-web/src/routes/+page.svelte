@@ -12,7 +12,7 @@
   import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
   import DiffSummary, { fmtArea } from '$lib/components/DiffSummary.svelte';
   import { loadProject, type Layer } from '$lib/project';
-  import { matchLayers, runDiffs, type PairDiff } from '$lib/diff';
+  import { matchLayers, pairKey, runDiffs, type PairDiff } from '$lib/diff';
   import { settings } from '$lib/stores/settings';
 
   const ALL_TYPES = Object.keys(LAYER_TYPE_LABEL) as LayerType[];
@@ -36,6 +36,7 @@
   let viewMode = $state<ViewMode>('a');
   let pairDiffs = $state.raw<PairDiff[]>([]);
   let diffing = $state(false);
+  let progress = $state<{ phase: string; done: number; total: number } | null>(null);
   let error = $state<string | null>(null);
   let dragOver = $state<'a' | 'b' | null>(null);
   let loadId = $state(0);
@@ -51,8 +52,17 @@
   const activeSide = $derived<'a' | 'b'>(viewMode === 'b' ? 'b' : 'a');
   const activeLayers = $derived(activeSide === 'b' ? slotB : slotA);
 
+  // A pair's diff is shown only if its layer is visible (in A, else B).
+  function pairVisible(key: string): boolean {
+    const la = slotA.find((l) => pairKey(l.classification) === key);
+    if (la) return la.visible;
+    const lb = slotB.find((l) => pairKey(l.classification) === key);
+    return lb ? lb.visible : true;
+  }
   const diffRenders = $derived(
-    pairDiffs.map((pd) => ({ spec: pd.result.spec, classGrid: pd.result.classGrid })),
+    pairDiffs
+      .filter((pd) => pairVisible(pd.key))
+      .map((pd) => ({ spec: pd.result.spec, classGrid: pd.result.classGrid })),
   );
   const allRegions = $derived(
     pairDiffs
@@ -73,10 +83,12 @@
   const toRender = (l: Layer) => ({ image: l.image, color: l.color, visible: l.visible });
   const viewerLayers = $derived.by(() => {
     if (viewMode === 'b') return slotB.map(toRender);
-    if (viewMode === 'overlay')
+    // Overlay & Diff frame to both projects (in diff mode layers are used only for
+    // framing — the change geometry can extend beyond A's bbox).
+    if (viewMode === 'overlay' || viewMode === 'diff')
       return [
         ...slotA.map((l) => ({ image: l.image, color: $settings.colorA, visible: l.visible })),
-        ...slotB.map((l) => ({ image: l.image, color: $settings.colorB, visible: l.visible })),
+        ...slotB.map((l) => ({ image: l.image, color: $settings.colorB, visible: true })),
       ];
     return slotA.map(toRender);
   });
@@ -85,7 +97,12 @@
     if (files.length === 0) return;
     error = null;
     try {
-      const project = await loadProject(files, files[0]?.name ?? side.toUpperCase());
+      progress = { phase: `Parsing ${side.toUpperCase()}`, done: 0, total: 0 };
+      const project = await loadProject(
+        files,
+        files[0]?.name ?? side.toUpperCase(),
+        (done, total) => (progress = { phase: `Parsing ${side.toUpperCase()}`, done, total }),
+      );
       if (project.layers.length === 0) throw new Error('No Gerber/Excellon layers found');
       if (side === 'a') {
         slotA = project.layers;
@@ -100,6 +117,8 @@
       else viewMode = side;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      progress = null;
     }
   }
 
@@ -108,9 +127,12 @@
     if (slotA.length && slotB.length) {
       diffing = true;
       try {
-        pairDiffs = await runDiffs(matchLayers(slotA, slotB));
+        pairDiffs = await runDiffs(matchLayers(slotA, slotB), (done, total, label) => {
+          progress = { phase: `Diffing ${label}`, done, total };
+        });
       } finally {
         diffing = false;
+        progress = null;
       }
     } else {
       pairDiffs = [];
@@ -313,9 +335,7 @@
         onsolo={showOnly}
         oncontext={openMenu}
       />
-    {/if}
-    <main class="view-area">
-      {#if hasProject}
+      <main class="view-area">
         <Viewer
           layers={viewerLayers}
           mode={viewMode === 'diff' ? 'diff' : 'layers'}
@@ -325,16 +345,59 @@
           {focusBox}
           {focusKey}
         />
-      {:else}
-        <div class="empty" data-testid="dropzone">
-          <p class="title">Drop project A and project B (folders or .zip) to diff</p>
-          <p class="hint">Everything is parsed and diffed locally — nothing is uploaded.</p>
-          {#if error}<p class="err" data-testid="error">⚠ {error}</p>{/if}
-        </div>
+      </main>
+      {#if viewMode === 'diff'}
+        <DiffSummary {pairDiffs} onfocus={focusRegion} />
       {/if}
-    </main>
-    {#if hasBoth && viewMode === 'diff'}
-      <DiffSummary {pairDiffs} onfocus={focusRegion} />
+    {:else}
+      <main class="view-area">
+        <div class="dual-drop" data-testid="dropzone">
+          {#each [{ side: 'a', name: nameA, has: hasA, count: slotA.length, open: () => inputA?.click() }, { side: 'b', name: nameB, has: hasB, count: slotB.length, open: () => inputB?.click() }] as z (z.side)}
+            <button
+              class="bigzone"
+              class:filled={z.has}
+              class:over={dragOver === z.side}
+              data-testid="bigdrop-{z.side}"
+              ondragover={(e) => {
+                e.preventDefault();
+                dragOver = z.side as 'a' | 'b';
+              }}
+              ondragleave={() => (dragOver = null)}
+              ondrop={(e) => onDrop(z.side as 'a' | 'b', e)}
+              onclick={z.open}
+            >
+              <div class="bz-badge" class:done={z.has}>{z.has ? '✓' : z.side.toUpperCase()}</div>
+              {#if z.has}
+                <div class="bz-name">{z.name}</div>
+                <div class="bz-sub">{z.count} layers · click or drop to replace</div>
+              {:else}
+                <div class="bz-title">Drop project {z.side.toUpperCase()}</div>
+                <div class="bz-sub">folder or .zip — or click to open</div>
+              {/if}
+            </button>
+          {/each}
+        </div>
+        {#if error}<p class="err drop-err" data-testid="error">⚠ {error}</p>{/if}
+      </main>
+    {/if}
+
+    {#if progress}
+      <div class="progress-overlay" data-testid="progress">
+        <div class="progress-card">
+          <div class="pc-phase">{progress.phase}…</div>
+          {#if progress.total > 0}
+            <div class="pc-bar">
+              <div
+                class="pc-fill"
+                style:width="{Math.round((progress.done / progress.total) * 100)}%"
+              ></div>
+            </div>
+            <div class="pc-count">{progress.done} / {progress.total}</div>
+          {:else}
+            <div class="spinner"></div>
+          {/if}
+        </div>
+      </div>
     {/if}
   </div>
 
@@ -382,12 +445,16 @@
   .slot {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.5rem;
     background: var(--bg);
     border: 1px dashed var(--border);
-    border-radius: 6px;
-    padding: 0.25rem 0.6rem;
-    max-width: 220px;
+    border-radius: 8px;
+    padding: 0.4rem 0.9rem;
+    min-width: 150px;
+    max-width: 240px;
+  }
+  .slot:hover {
+    border-color: var(--accent);
   }
   .slot.filled {
     border-style: solid;
@@ -445,6 +512,7 @@
     font-size: 0.85rem;
   }
   .main-area {
+    position: relative;
     flex: 1;
     display: flex;
     min-height: 0;
@@ -453,29 +521,125 @@
     flex: 1;
     min-width: 0;
   }
-  .empty {
+  .dual-drop {
     height: 100%;
+    display: flex;
+    gap: 1.5rem;
+    padding: 2rem;
+  }
+  .bigzone {
+    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
-    text-align: center;
-    padding: 2rem;
+    gap: 0.6rem;
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    background: var(--panel);
+    color: var(--text);
+    transition:
+      border-color 0.12s,
+      background 0.12s;
   }
-  .empty .title {
-    font-size: 1.15rem;
-    margin: 0;
+  .bigzone:hover {
+    border-color: var(--accent);
   }
-  .empty .hint {
+  .bigzone.over {
+    border-color: var(--accent);
+    background: rgba(0, 255, 136, 0.08);
+  }
+  .bigzone.filled {
+    border-style: solid;
+  }
+  .bz-badge {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-weight: 800;
+    font-size: 1.2rem;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
     color: var(--text-dim);
-    margin: 0;
-    font-size: 0.9rem;
+  }
+  .bz-badge.done {
+    background: var(--accent);
+    color: #10101a;
+    border-color: var(--accent);
+  }
+  .bz-title,
+  .bz-name {
+    font-size: 1.2rem;
+  }
+  .bz-sub {
+    color: var(--text-dim);
+    font-size: 0.85rem;
   }
   .err {
     color: #ff6b6b;
     font-family: var(--mono);
     font-size: 0.85rem;
+  }
+  .drop-err {
+    position: absolute;
+    bottom: 1rem;
+    left: 0;
+    right: 0;
+    text-align: center;
+  }
+  .progress-overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(10, 10, 20, 0.55);
+    z-index: 20;
+  }
+  .progress-card {
+    min-width: 280px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    text-align: center;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  }
+  .pc-phase {
+    font-size: 0.95rem;
+    margin-bottom: 0.75rem;
+  }
+  .pc-bar {
+    height: 8px;
+    background: var(--bg);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .pc-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.15s ease;
+  }
+  .pc-count {
+    margin-top: 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    margin: 0.25rem auto 0;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .statusbar {
     display: flex;
