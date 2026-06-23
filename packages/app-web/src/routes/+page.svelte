@@ -11,6 +11,7 @@
   import LayerList from '$lib/components/LayerList.svelte';
   import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
   import DiffSummary, { fmtArea } from '$lib/components/DiffSummary.svelte';
+  import About, { VERSION, GIT_SHA } from '$lib/components/About.svelte';
   import { loadProject, type Layer } from '$lib/project';
   import { matchLayers, pairKey, runDiffs, type PairDiff } from '$lib/diff';
   import { settings } from '$lib/stores/settings';
@@ -48,6 +49,7 @@
   // The intro dual-dropzone stays up until BOTH projects are loaded, so a second
   // file can be dropped without the view collapsing. User can opt out via a button.
   let forceSingle = $state(false);
+  let aboutOpen = $state(false);
 
   const hasA = $derived(slotA.length > 0);
   const hasB = $derived(slotB.length > 0);
@@ -355,6 +357,13 @@
       </div>
     {/if}
     {#if hasProject}<button class="btn" onclick={reset}>Reset</button>{/if}
+    <button
+      class="iconbtn"
+      data-testid="about-btn"
+      title="About OpenGerberDiff"
+      aria-label="About OpenGerberDiff"
+      onclick={() => (aboutOpen = true)}>ⓘ</button
+    >
     <input
       bind:this={inputA}
       data-testid="file-a"
@@ -473,9 +482,19 @@
       <span>Ready</span>
     {/if}
     <span class="spacer"></span>
-    {#if error}<span class="err">{error}</span>{/if}
+    {#if error}<span class="err">{error}</span><span class="sep">·</span>{/if}
+    <button
+      class="build"
+      data-testid="build-info"
+      title="About — version {VERSION}, build {GIT_SHA}"
+      onclick={() => (aboutOpen = true)}
+    >
+      OGD v{VERSION}<span class="sep">·</span><span class="sha">{GIT_SHA}</span>
+    </button>
   </footer>
 </div>
+
+<About open={aboutOpen} onclose={() => (aboutOpen = false)} />
 
 <style>
   .app {
@@ -567,6 +586,19 @@
     border-radius: 6px;
     padding: 0.3rem 0.7rem;
     font-size: 0.85rem;
+  }
+  .iconbtn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 6px;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+  .iconbtn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .main-area {
     position: relative;
@@ -733,6 +765,25 @@
     color: #f0903c;
   }
   .busy {
+    color: var(--accent);
+  }
+  .build {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 5px;
+  }
+  .build:hover {
+    color: var(--text);
+    background: var(--bg);
+  }
+  .build .sha {
     color: var(--accent);
   }
 </style>

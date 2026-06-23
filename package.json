@@ -1,6 +1,6 @@
 {
   "name": "opengerberdiff",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "private": true,
   "description": "OpenGerberDiff (OGD) — free, open-source, pure-web visual + quantitative diff tool for Gerber/Excellon PCB files.",
   "license": "MIT",
