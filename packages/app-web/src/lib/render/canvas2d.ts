@@ -27,24 +27,93 @@ export function renderImage(
 
   ctx.save();
   ctx.setTransform(vp.zoom, 0, 0, -vp.zoom, vp.panX, vp.panY);
-  ctx.fillStyle = style.color;
-  ctx.strokeStyle = style.color;
+  drawImageGeometry(ctx, image, style.color);
+  ctx.restore();
+
+  compositeBackground(ctx, vp, style.background);
+}
+
+export interface RenderLayer {
+  image: Image;
+  color: string;
+  visible: boolean;
+}
+
+/**
+ * Composite a stack of layers (bottom-first) into one view. Each layer is drawn
+ * on its own offscreen so clear-polarity erases only within that layer, then
+ * blitted over the previous ones; the background is painted last.
+ */
+export function renderLayers(
+  ctx: CanvasRenderingContext2D,
+  layers: RenderLayer[],
+  vp: Viewport,
+  background: string,
+): void {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0, 0, vp.width, vp.height);
+
+  const off = getOffscreen(vp.width, vp.height);
+  const octx = off.ctx;
+  for (const layer of layers) {
+    if (!layer.visible) continue;
+    octx.setTransform(1, 0, 0, 1, 0, 0);
+    octx.globalCompositeOperation = 'source-over';
+    octx.clearRect(0, 0, vp.width, vp.height);
+    octx.save();
+    octx.setTransform(vp.zoom, 0, 0, -vp.zoom, vp.panX, vp.panY);
+    drawImageGeometry(octx, layer.image, layer.color);
+    octx.restore();
+    ctx.drawImage(off.canvas, 0, 0);
+  }
+
+  compositeBackground(ctx, vp, background);
+}
+
+/** Draw an image's geometry in the current (already-set) world transform. */
+function drawImageGeometry(ctx: CanvasRenderingContext2D, image: Image, color: string): void {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-
   for (const g of image.graphics) {
     ctx.globalCompositeOperation = g.polarity === 'clear' ? 'destination-out' : 'source-over';
     if (g.kind === 'pad') drawPad(ctx, image.tools.get(g.tool), g.x, g.y);
     else if (g.kind === 'stroke') drawStroke(ctx, g.path, g.width);
     else drawFill(ctx, g.path);
   }
-  ctx.restore();
+  ctx.globalCompositeOperation = 'source-over';
+}
 
-  // Paint the background behind the drawn copper.
+function compositeBackground(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  background: string,
+): void {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'destination-over';
-  ctx.fillStyle = style.background;
+  ctx.fillStyle = background;
   ctx.fillRect(0, 0, vp.width, vp.height);
   ctx.globalCompositeOperation = 'source-over';
+}
+
+interface Offscreen {
+  canvas: HTMLCanvasElement | OffscreenCanvas;
+  ctx: CanvasRenderingContext2D;
+}
+let offscreen: (Offscreen & { w: number; h: number }) | null = null;
+
+function getOffscreen(w: number, h: number): Offscreen {
+  if (!offscreen || offscreen.w !== w || offscreen.h !== h) {
+    const canvas: HTMLCanvasElement | OffscreenCanvas =
+      typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(w, h)
+        : Object.assign(document.createElement('canvas'), { width: w, height: h });
+    const ctx = canvas.getContext('2d') as unknown as CanvasRenderingContext2D;
+    offscreen = { canvas, ctx, w, h };
+  }
+  return offscreen;
 }
 
 function drawPad(

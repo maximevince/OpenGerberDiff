@@ -1,7 +1,6 @@
 import * as Comlink from 'comlink';
 import { unzipSync } from 'fflate';
-import type { ParseResult } from '@ogd/core';
-import type { ParseWorkerApi } from './workers/parse.worker.ts';
+import type { ParsedLayer, ParseWorkerApi } from './workers/parse.worker.ts';
 
 export interface RawFile {
   name: string;
@@ -50,7 +49,7 @@ function getWorker(): Comlink.Remote<ParseWorkerApi> {
   return workerApi;
 }
 
-/** Parse one raw file in the worker (bytes transferred, not copied). */
-export function parseRawFile(raw: RawFile): Promise<ParseResult> {
-  return getWorker().parse(raw.name, Comlink.transfer(raw.bytes, [raw.bytes]));
+/** Parse + classify one raw file in the worker (bytes transferred, not copied). */
+export function parseRawFile(raw: RawFile, gbrjobFn?: string): Promise<ParsedLayer> {
+  return getWorker().parse(raw.name, Comlink.transfer(raw.bytes, [raw.bytes]), gbrjobFn);
 }

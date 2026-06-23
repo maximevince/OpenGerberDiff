@@ -1,36 +1,40 @@
 <script lang="ts">
-  import type { Image, Diagnostic } from '@ogd/core';
-  import { boundingBoxWidth, boundingBoxHeight } from '@ogd/core';
   import Viewer from '$lib/components/Viewer.svelte';
-  import { expandFile, looksLikeGerber, parseRawFile } from '$lib/ingest';
+  import LayerList from '$lib/components/LayerList.svelte';
+  import { loadProject, type Layer } from '$lib/project';
   import { settings } from '$lib/stores/settings';
 
-  let image = $state<Image | null>(null);
-  let fileName = $state<string | null>(null);
-  let diagnostics = $state<Diagnostic[]>([]);
+  let layers = $state<Layer[]>([]);
+  let projectName = $state<string | null>(null);
+  let skipped = $state<string[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let dragOver = $state(false);
+  let loadId = $state(0);
   let fileInput: HTMLInputElement | undefined = $state();
 
-  const errorCount = $derived(diagnostics.filter((d) => d.severity === 'error').length);
-  const warnCount = $derived(diagnostics.filter((d) => d.severity === 'warning').length);
+  const hasProject = $derived(layers.length > 0);
+  const totalDiagnostics = $derived(
+    layers.reduce((n, l) => n + l.diagnostics.filter((d) => d.severity !== 'info').length, 0),
+  );
+  const renderLayers = $derived(
+    layers.map((l) => ({ image: l.image, color: l.color, visible: l.visible })),
+  );
 
   async function loadFiles(files: File[]) {
     if (files.length === 0) return;
     loading = true;
     error = null;
     try {
-      const raws = (await Promise.all(files.map(expandFile))).flat();
-      const pick = raws.find((r) => looksLikeGerber(r.name)) ?? raws[0];
-      if (!pick) throw new Error('No files found');
-      const res = await parseRawFile(pick);
-      image = res.image;
-      diagnostics = res.diagnostics;
-      fileName = pick.name;
+      const project = await loadProject(files, files[0]?.name ?? 'Project');
+      if (project.layers.length === 0) throw new Error('No Gerber/Excellon layers found');
+      layers = project.layers;
+      projectName = project.name;
+      skipped = project.skipped;
+      loadId += 1;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
-      image = null;
+      layers = [];
     } finally {
       loading = false;
     }
@@ -39,19 +43,28 @@
   function onDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
-    const files = Array.from(e.dataTransfer?.files ?? []);
-    void loadFiles(files);
+    void loadFiles(Array.from(e.dataTransfer?.files ?? []));
+  }
+  function onPick(e: Event) {
+    void loadFiles(Array.from((e.target as HTMLInputElement).files ?? []));
   }
 
-  function onPick(e: Event) {
-    const files = Array.from((e.target as HTMLInputElement).files ?? []);
-    void loadFiles(files);
+  function toggle(id: string) {
+    layers = layers.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l));
+  }
+  function setColor(id: string, color: string) {
+    layers = layers.map((l) => (l.id === id ? { ...l, color } : l));
+  }
+  function solo(id: string) {
+    const onlyThis =
+      layers.filter((l) => l.visible).length === 1 && layers.find((l) => l.id === id)?.visible;
+    layers = layers.map((l) => ({ ...l, visible: onlyThis ? true : l.id === id }));
   }
 
   function reset() {
-    image = null;
-    fileName = null;
-    diagnostics = [];
+    layers = [];
+    projectName = null;
+    skipped = [];
     error = null;
   }
 </script>
@@ -72,54 +85,50 @@
     <h1 class="brand">OpenGerberDiff</h1>
     <span class="tag">visual + quantitative PCB diff · runs 100% in your browser</span>
     <span class="spacer"></span>
-    <button class="btn" onclick={() => fileInput?.click()}>Open file / zip…</button>
-    {#if image}<button class="btn" onclick={reset}>Reset</button>{/if}
-    <input
-      bind:this={fileInput}
-      type="file"
-      multiple
-      accept=".gbr,.ger,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gko,.gm1,.drl,.xln,.exc,.zip,*"
-      onchange={onPick}
-      hidden
-    />
+    <button class="btn" onclick={() => fileInput?.click()}>Open files / folder / zip…</button>
+    {#if hasProject}<button class="btn" onclick={reset}>Reset</button>{/if}
+    <input bind:this={fileInput} type="file" multiple onchange={onPick} hidden />
   </header>
 
-  <main class="view-area">
-    {#if image}
-      <Viewer {image} color={$settings.colorA} background={$settings.backgroundColor} />
-    {:else}
-      <div class="empty" data-testid="dropzone">
-        <p class="title">{loading ? 'Parsing…' : 'Drop a Gerber/Excellon file, or a .zip'}</p>
-        <p class="hint">
-          or use “Open file / zip…”. Everything is parsed locally — nothing is uploaded.
-        </p>
-        {#if error}<p class="err" data-testid="error">⚠ {error}</p>{/if}
-      </div>
+  <div class="main-area">
+    {#if hasProject}
+      <LayerList {layers} ontoggle={toggle} oncolor={setColor} onsolo={solo} />
     {/if}
-  </main>
+    <main class="view-area">
+      {#if hasProject}
+        <Viewer layers={renderLayers} background={$settings.backgroundColor} fitKey={loadId} />
+      {:else}
+        <div class="empty" data-testid="dropzone">
+          <p class="title">
+            {loading ? 'Parsing layers…' : 'Drop a folder or .zip of Gerber/Excellon files'}
+          </p>
+          <p class="hint">
+            or use “Open files / folder / zip…”. Everything is parsed locally — nothing is uploaded.
+          </p>
+          {#if error}<p class="err" data-testid="error">⚠ {error}</p>{/if}
+        </div>
+      {/if}
+    </main>
+  </div>
 
   <footer class="statusbar" data-testid="statusbar">
-    {#if image && fileName}
-      <span data-testid="status-file">{fileName}</span>
+    {#if hasProject}
+      <span data-testid="status-project">{projectName}</span>
       <span class="sep">·</span>
-      <span
-        >{boundingBoxWidth(image.boundingBox).toFixed(2)} × {boundingBoxHeight(
-          image.boundingBox,
-        ).toFixed(2)} mm</span
-      >
+      <span data-testid="status-layers">{layers.length} layers</span>
       <span class="sep">·</span>
-      <span
-        >{image.stats.padCount} pads · {image.stats.strokeCount} traces · {image.stats.fillCount} fills</span
-      >
-      {#if errorCount + warnCount > 0}
+      <span>{layers.filter((l) => l.visible).length} visible</span>
+      {#if skipped.length}
         <span class="sep">·</span>
-        <span class="diag" data-testid="diag-count">{errorCount} err / {warnCount} warn</span>
+        <span class="dim">{skipped.length} skipped</span>
+      {/if}
+      {#if totalDiagnostics > 0}
+        <span class="sep">·</span>
+        <span class="diag" data-testid="diag-count">{totalDiagnostics} warnings</span>
       {/if}
     {:else}
       <span>Ready</span>
     {/if}
-    <span class="spacer"></span>
-    <span class="dim">format: {image?.source.format ?? '—'}</span>
   </footer>
 </div>
 
@@ -171,9 +180,14 @@
   .btn:hover {
     border-color: var(--accent);
   }
+  .main-area {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
   .view-area {
     flex: 1;
-    min-height: 0;
+    min-width: 0;
   }
   .empty {
     height: 100%;

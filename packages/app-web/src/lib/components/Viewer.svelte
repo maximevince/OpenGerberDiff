@@ -1,21 +1,26 @@
 <script lang="ts">
-  import type { Image } from '@ogd/core';
-  import { renderImage } from '$lib/render/canvas2d';
+  import {
+    emptyBoundingBox,
+    isFiniteBoundingBox,
+    unionBoundingBox,
+    type BoundingBox,
+  } from '@ogd/core';
+  import { renderLayers, type RenderLayer } from '$lib/render/canvas2d';
   import { fitView, panBy, zoomAbout, type Viewport } from '$lib/render/viewport';
 
   interface Props {
-    image: Image | null;
-    color?: string;
+    /** Layers in top-first order (rendered bottom-first). */
+    layers: RenderLayer[];
     background?: string;
+    /** Change this to trigger a re-fit (e.g. when a new project loads). */
+    fitKey?: unknown;
   }
-  let { image, color = '#00ff88', background = '#1a1a2e' }: Props = $props();
+  let { layers, background = '#1a1a2e', fitKey = undefined }: Props = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let container: HTMLDivElement | undefined = $state();
   let vp: Viewport | null = $state(null);
   let dpr = 1;
-
-  // Cursor world position (mm) for the status line.
   let cursorMm = $state<{ x: number; y: number } | null>(null);
 
   function deviceSize(): { w: number; h: number } {
@@ -27,10 +32,19 @@
     };
   }
 
+  function visibleBounds(): BoundingBox {
+    let box = emptyBoundingBox();
+    for (const l of layers) {
+      if (l.visible && isFiniteBoundingBox(l.image.boundingBox)) {
+        box = unionBoundingBox(box, l.image.boundingBox);
+      }
+    }
+    return box;
+  }
+
   function fit() {
-    if (!image) return;
     const { w, h } = deviceSize();
-    vp = fitView(image.boundingBox, w, h);
+    vp = fitView(visibleBounds(), w, h);
   }
 
   function draw() {
@@ -41,23 +55,19 @@
       canvas.width = vp.width;
       canvas.height = vp.height;
     }
-    if (!image) {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      return;
-    }
-    renderImage(ctx, image, vp, { color, background });
+    // Render bottom-first (layers come in top-first order).
+    renderLayers(ctx, layers.slice().reverse(), vp, background);
   }
 
-  // Re-fit whenever a new image arrives.
+  // Re-fit only when the project identity changes.
   $effect(() => {
-    if (image) fit();
+    void fitKey;
+    fit();
   });
 
-  // Redraw on any state change.
+  // Redraw on layer/visibility/color/viewport change.
   $effect(() => {
-    void image;
-    void color;
+    void layers;
     void background;
     void vp;
     draw();
@@ -99,9 +109,7 @@
   function onPointerMove(e: PointerEvent) {
     if (vp && canvas) {
       const [sx, sy] = localDevice(e);
-      const w = (sx - vp.panX) / vp.zoom;
-      const h = (vp.panY - sy) / vp.zoom;
-      cursorMm = { x: w, y: h };
+      cursorMm = { x: (sx - vp.panX) / vp.zoom, y: (vp.panY - sy) / vp.zoom };
     }
     if (!dragging || !vp) return;
     const dx = (e.clientX - last[0]) * dpr;
@@ -128,12 +136,10 @@
     class:grabbing={dragging}
   ></canvas>
 
-  {#if image}
-    <button class="fit-btn" onclick={fit} title="Fit to view (double-click)">Fit</button>
-    <div class="coords" data-testid="cursor-coords">
-      {#if cursorMm}{cursorMm.x.toFixed(3)}, {cursorMm.y.toFixed(3)} mm{:else}—{/if}
-    </div>
-  {/if}
+  <button class="fit-btn" onclick={fit} title="Fit to view (double-click)">Fit</button>
+  <div class="coords" data-testid="cursor-coords">
+    {#if cursorMm}{cursorMm.x.toFixed(3)}, {cursorMm.y.toFixed(3)} mm{:else}—{/if}
+  </div>
 </div>
 
 <style>

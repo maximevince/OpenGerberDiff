@@ -11,3 +11,4 @@ export * from './model/index.js';
 export * from './units.js';
 export * from './hash.js';
 export * from './parse/index.js';
+export * from './classify/index.js';
