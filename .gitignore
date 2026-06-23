@@ -9,5 +9,8 @@ playwright-report/
 .DS_Store
 *.log
 
+# Local docs — kept locally, not tracked
+/docs/
+
 # Scratch commit-message file
 COMMITMSG.txt
