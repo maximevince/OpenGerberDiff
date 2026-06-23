@@ -1,0 +1,12 @@
+G04 OGD: three disjoint traces sharing one aperture (bridging regression)*
+%FSLAX24Y24*%
+%MOMM*%
+%ADD10C,0.2*%
+D10*
+X0Y0D02*
+X50000Y0D01*
+X0Y20000D02*
+X50000Y20000D01*
+X0Y40000D02*
+X50000Y40000D01*
+M02*

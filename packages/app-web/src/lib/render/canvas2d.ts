@@ -107,59 +107,82 @@ function drawPad(
 }
 
 function drawStroke(ctx: CanvasRenderingContext2D, path: PathSegment[], width: number): void {
-  const pts = polyline(path);
-  if (pts.length < 2) {
-    // a zero-length stroke = a round dot of `width` diameter
-    if (pts.length === 1 && width > 0) {
-      ctx.beginPath();
-      ctx.arc(pts[0]![0], pts[0]![1], width / 2, 0, TWO_PI);
-      ctx.fill();
-    }
-    return;
-  }
+  if (path.length === 0) return;
   ctx.lineWidth = Math.max(width, 1e-4);
   ctx.beginPath();
-  ctx.moveTo(pts[0]![0], pts[0]![1]);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]![0], pts[i]![1]);
+  tracePath(ctx, path);
   ctx.stroke();
 }
 
 function drawFill(ctx: CanvasRenderingContext2D, path: PathSegment[]): void {
-  const pts = polyline(path);
-  if (pts.length < 3) return;
+  if (path.length === 0) return;
   ctx.beginPath();
-  ctx.moveTo(pts[0]![0], pts[0]![1]);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]![0], pts[i]![1]);
+  tracePath(ctx, path);
   ctx.closePath();
   ctx.fill('evenodd');
 }
 
-/** Flatten a path (lines + arcs) into a polyline of world points. */
-function polyline(path: PathSegment[]): Array<[number, number]> {
-  const pts: Array<[number, number]> = [];
-  if (path.length === 0) return pts;
-  pts.push([path[0]!.start[0], path[0]!.start[1]]);
-  for (const seg of path) {
-    if (seg.type === 'line') {
-      pts.push([seg.end[0], seg.end[1]]);
-    } else {
-      const [cx, cy] = seg.center;
-      const a0 = Math.atan2(seg.start[1] - cy, seg.start[0] - cx);
-      const a1 = Math.atan2(seg.end[1] - cy, seg.end[0] - cx);
-      let delta = a1 - a0;
-      if (seg.dir === 'ccw') {
-        while (delta <= 0) delta += TWO_PI;
-      } else {
-        while (delta >= 0) delta -= TWO_PI;
-      }
-      const steps = Math.max(1, Math.ceil(Math.abs(delta) / ARC_STEP));
-      for (let i = 1; i <= steps; i++) {
-        const a = a0 + (delta * i) / steps;
-        pts.push([cx + seg.radius * Math.cos(a), cy + seg.radius * Math.sin(a)]);
-      }
-    }
+// Largest gap (mm) between a segment's start and the running point that still
+// counts as "connected". The plotter emits contiguous endpoints bit-identical,
+// so this only needs to be tiny.
+const GAP_EPS = 1e-7;
+
+function tracePath(ctx: CanvasRenderingContext2D, path: PathSegment[]): void {
+  for (const sub of toSubpaths(path)) {
+    if (sub.length === 0) continue;
+    ctx.moveTo(sub[0]![0], sub[0]![1]);
+    for (let i = 1; i < sub.length; i++) ctx.lineTo(sub[i]![0], sub[i]![1]);
   }
-  return pts;
+}
+
+/**
+ * Split a path into connected subpaths (polylines), tessellating arcs. Crucially,
+ * the plotter coalesces all same-aperture draws into ONE path with *disjoint*
+ * subpaths (pen-up moves between separate traces), so we must break a new subpath
+ * wherever a segment doesn't continue from the previous point — otherwise gaps
+ * get bridged by spurious lines ("traces all over the place"). Exported for tests.
+ */
+export function toSubpaths(path: PathSegment[]): Array<Array<[number, number]>> {
+  const subs: Array<Array<[number, number]>> = [];
+  let cur: Array<[number, number]> | null = null;
+  let cx = NaN;
+  let cy = NaN;
+  for (const seg of path) {
+    const sx = seg.start[0];
+    const sy = seg.start[1];
+    if (cur === null || !(Math.abs(sx - cx) <= GAP_EPS && Math.abs(sy - cy) <= GAP_EPS)) {
+      cur = [[sx, sy]];
+      subs.push(cur);
+    }
+    if (seg.type === 'line') {
+      cur.push([seg.end[0], seg.end[1]]);
+    } else {
+      for (const p of arcPoints(seg)) cur.push(p);
+    }
+    cx = seg.end[0];
+    cy = seg.end[1];
+  }
+  return subs;
+}
+
+/** Tessellate an arc segment into points after its start, ending at its end. */
+function arcPoints(seg: Extract<PathSegment, { type: 'arc' }>): Array<[number, number]> {
+  const [cx, cy] = seg.center;
+  const a0 = Math.atan2(seg.start[1] - cy, seg.start[0] - cx);
+  const a1 = Math.atan2(seg.end[1] - cy, seg.end[0] - cx);
+  let delta = a1 - a0;
+  if (seg.dir === 'ccw') {
+    while (delta <= 0) delta += TWO_PI;
+  } else {
+    while (delta >= 0) delta -= TWO_PI;
+  }
+  const steps = Math.max(1, Math.ceil(Math.abs(delta) / ARC_STEP));
+  const out: Array<[number, number]> = [];
+  for (let i = 1; i <= steps; i++) {
+    const a = a0 + (delta * i) / steps;
+    out.push([cx + seg.radius * Math.cos(a), cy + seg.radius * Math.sin(a)]);
+  }
+  return out;
 }
 
 function roundRect(
