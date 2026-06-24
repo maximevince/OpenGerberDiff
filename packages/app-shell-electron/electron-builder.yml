@@ -21,7 +21,6 @@ publish:
 linux:
   target:
     - AppImage
-    - deb
   category: Development
   synopsis: Visual & quantitative diff for Gerber/Excellon PCB files
 mac:

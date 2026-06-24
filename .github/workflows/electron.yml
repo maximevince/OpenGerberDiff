@@ -17,7 +17,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            args: --linux AppImage deb
+            args: --linux AppImage
           - os: windows-latest
             args: --win nsis
     runs-on: ${{ matrix.os }}
@@ -50,7 +50,6 @@ jobs:
           name: installers-${{ matrix.os }}
           path: |
             packages/app-shell-electron/dist/*.AppImage
-            packages/app-shell-electron/dist/*.deb
             packages/app-shell-electron/dist/*.exe
           if-no-files-found: ignore
 
