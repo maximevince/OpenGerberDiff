@@ -31,6 +31,11 @@
     focusKey?: unknown;
     /** Unit for the measurement readout. */
     unit?: DisplayUnit;
+    /** Explicit framing box; if set, fit() uses it instead of the visible layers
+     * (the split view fits both panes to the A∪B union so they stay aligned). */
+    fitBounds?: BoundingBox | null;
+    /** Bindable viewport — two panes binding the same one are pan/zoom-synced. */
+    vp?: Viewport | null;
   }
   let {
     layers,
@@ -42,11 +47,12 @@
     focusBox = null,
     focusKey = undefined,
     unit = 'mm',
+    fitBounds = null,
+    vp = $bindable(null),
   }: Props = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let container: HTMLDivElement | undefined = $state();
-  let vp: Viewport | null = $state(null);
   let dpr = 1;
   let cursorMm = $state<{ x: number; y: number } | null>(null);
 
@@ -71,7 +77,8 @@
 
   function fit() {
     const { w, h } = deviceSize();
-    vp = fitView(visibleBounds(), w, h);
+    const box = fitBounds && isFiniteBoundingBox(fitBounds) ? fitBounds : visibleBounds();
+    vp = fitView(box, w, h);
   }
 
   let rafId = 0;

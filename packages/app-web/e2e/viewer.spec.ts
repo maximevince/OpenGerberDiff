@@ -399,3 +399,36 @@ test('overlay/onion modes respect per-layer visibility', async ({ page }) => {
   await expect(page.locator('[data-testid=layer-row]').first()).toHaveClass(/hidden/);
   expect(await copperPixels(page)).toBeLessThan(full);
 });
+
+test('split view shows A and B in two synced panes', async ({ page }) => {
+  await page.goto('/');
+  await page.setInputFiles(FILE_A, zipFile({ 'board-F_Cu.gbr': pad(0) }));
+  await page.setInputFiles(FILE_B, zipFile({ 'board-F_Cu.gbr': pad(20000) }));
+  await expect(page.getByTestId('board-canvas')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Split', exact: true }).click();
+  await expect(page.getByTestId('split-view')).toBeVisible();
+  await expect(page.getByTestId('board-canvas')).toHaveCount(2);
+  await expect(page.locator('.pane-label')).toHaveCount(2);
+
+  // Both panes must render their own project's copper.
+  const counts = await page.evaluate(async () => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return [...document.querySelectorAll('[data-testid=board-canvas]')].map((el) => {
+      const c = el as HTMLCanvasElement;
+      const { data } = c.getContext('2d')!.getImageData(0, 0, c.width, c.height);
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (
+          Math.abs(data[i]! - 26) + Math.abs(data[i + 1]! - 26) + Math.abs(data[i + 2]! - 46) >
+          60
+        )
+          n++;
+      }
+      return n;
+    });
+  });
+  expect(counts).toHaveLength(2);
+  expect(counts[0]).toBeGreaterThan(0);
+  expect(counts[1]).toBeGreaterThan(0);
+});

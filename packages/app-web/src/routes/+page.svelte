@@ -2,11 +2,15 @@
   import {
     LAYER_TYPE_COLOR,
     LAYER_TYPE_LABEL,
+    emptyBoundingBox,
+    isFiniteBoundingBox,
     layerSortIndex,
+    unionBoundingBox,
     type BoundingBox,
     type LayerSide,
     type LayerType,
   } from '@ogd/core';
+  import type { Viewport } from '$lib/render/viewport';
   import Viewer from '$lib/components/Viewer.svelte';
   import LayerList from '$lib/components/LayerList.svelte';
   import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
@@ -38,18 +42,21 @@
     return 'all';
   }
 
-  type ViewMode = 'diff' | 'changes' | 'xor' | 'overlay' | 'onion' | 'a' | 'b';
+  type ViewMode = 'diff' | 'changes' | 'xor' | 'overlay' | 'onion' | 'split' | 'a' | 'b';
   const VIEW_MODES: { id: ViewMode; label: string; title: string }[] = [
     { id: 'diff', label: 'Diff', title: 'Added / removed / common' },
     { id: 'changes', label: 'Changes', title: 'Only added & removed (no common)' },
     { id: 'xor', label: 'XOR', title: 'Any change in one color' },
     { id: 'overlay', label: 'Overlay', title: 'A and B tinted together' },
     { id: 'onion', label: 'Onion', title: 'Blend A↔B with a slider' },
+    { id: 'split', label: 'Split', title: 'A and B side by side (synced)' },
     { id: 'a', label: 'A', title: 'Project A only' },
     { id: 'b', label: 'B', title: 'Project B only' },
   ];
   const DIFF_MODES = new Set<ViewMode>(['diff', 'changes', 'xor']);
   let onionMix = $state(0.5);
+  // Shared viewport for the side-by-side panes (always pan/zoom-synced).
+  let splitVp = $state<Viewport | null>(null);
 
   // $state.raw: reactive on reassignment but contents are NOT proxied — required
   // so the parsed images / diff results stay structured-cloneable for the workers
@@ -197,6 +204,16 @@
         opacity: bOp,
       })),
     ];
+  });
+
+  // Both split panes frame to the same A∪B union so the boards stay aligned.
+  const splitUnion = $derived.by(() => {
+    let box = emptyBoundingBox();
+    for (const l of [...slotA, ...slotB]) {
+      if (isFiniteBoundingBox(l.image.boundingBox))
+        box = unionBoundingBox(box, l.image.boundingBox);
+    }
+    return box;
   });
 
   const viewerMode = $derived(DIFF_MODES.has(viewMode) ? 'diff' : 'layers');
@@ -663,21 +680,48 @@
         onsolo={showOnly}
         oncontext={openMenu}
       />
-      <main class="view-area">
-        <Viewer
-          layers={viewerLayers}
-          mode={viewerMode}
-          diffs={diffRenders}
-          diffOpts={viewerDiffOpts}
-          unit={$settings.measurementUnit}
-          background={$settings.backgroundColor}
-          fitKey={loadId}
-          {focusBox}
-          {focusKey}
-        />
-      </main>
-      {#if DIFF_MODES.has(viewMode)}
-        <DiffSummary {pairDiffs} onfocus={focusRegion} />
+      {#if viewMode === 'split'}
+        <main class="view-area split" data-testid="split-view">
+          <div class="pane">
+            <div class="pane-label"><span class="tag">A</span>{nameA}</div>
+            <Viewer
+              layers={slotA.map(toRender)}
+              bind:vp={splitVp}
+              fitBounds={splitUnion}
+              unit={$settings.measurementUnit}
+              background={$settings.backgroundColor}
+              fitKey={loadId}
+            />
+          </div>
+          <div class="pane">
+            <div class="pane-label"><span class="tag">B</span>{nameB}</div>
+            <Viewer
+              layers={slotB.map(toRender)}
+              bind:vp={splitVp}
+              fitBounds={splitUnion}
+              unit={$settings.measurementUnit}
+              background={$settings.backgroundColor}
+              fitKey={loadId}
+            />
+          </div>
+        </main>
+      {:else}
+        <main class="view-area">
+          <Viewer
+            layers={viewerLayers}
+            mode={viewerMode}
+            diffs={diffRenders}
+            diffOpts={viewerDiffOpts}
+            unit={$settings.measurementUnit}
+            background={$settings.backgroundColor}
+            fitKey={loadId}
+            {focusBox}
+            {focusKey}
+          />
+        </main>
+        {#if DIFF_MODES.has(viewMode)}
+          <DiffSummary {pairDiffs} onfocus={focusRegion} />
+        {/if}
       {/if}
     {:else if !hasProject && !splashDismissed}
       <main class="view-area">
@@ -778,7 +822,7 @@
       title="About — version {VERSION}, build {GIT_SHA}"
       onclick={() => (aboutOpen = true)}
     >
-      OGD v{VERSION}<span class="sep">·</span><span class="sha">{GIT_SHA}</span>
+      OpenGerberDiff v{VERSION}<span class="sep">·</span><span class="sha">{GIT_SHA}</span>
     </button>
   </footer>
 </div>
@@ -907,6 +951,42 @@
   .view-area {
     flex: 1;
     min-width: 0;
+  }
+  .view-area.split {
+    display: flex;
+    height: 100%;
+  }
+  .pane {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+  .pane + .pane {
+    border-left: 1px solid var(--border);
+  }
+  .pane-label {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: calc(100% - 1rem);
+    font-size: 0.78rem;
+    color: var(--text);
+    background: rgba(0, 0, 0, 0.45);
+    padding: 0.15rem 0.5rem;
+    border-radius: 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pane-label .tag {
+    font-weight: 700;
+    color: var(--accent);
   }
   .dual-drop {
     height: 100%;
