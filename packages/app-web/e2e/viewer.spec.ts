@@ -21,6 +21,11 @@ function zipFile(entries: Record<string, Uint8Array>) {
   return { name: 'p.zip', mimeType: 'application/zip', buffer: Buffer.from(zipSync(entries)) };
 }
 
+/** Dismiss the intro splash to reveal the A/B picker. */
+async function dismissSplash(page: Page): Promise<void> {
+  await page.getByTestId('splash-start').click();
+}
+
 /** Load a single project into A and continue to the viewer (intro stays up until both). */
 async function loadSingle(page: Page, file: Parameters<Page['setInputFiles']>[1]): Promise<void> {
   await page.setInputFiles(FILE_A, file);
@@ -102,8 +107,12 @@ test('keyboard H/A toggle all layer visibility', async ({ page }) => {
   expect(await copperPixels(page)).toBeGreaterThan(0);
 });
 
-test('empty screen shows big A and B dropzones', async ({ page }) => {
+test('splash shows first, then reveals the A/B dropzones', async ({ page }) => {
   await page.goto('/');
+  await expect(page.getByTestId('splash')).toBeVisible();
+  await expect(page.getByTestId('bmc-link')).toHaveAttribute('href', /buymeacoffee\.com/);
+  await expect(page.getByTestId('bigdrop-a')).toHaveCount(0);
+  await dismissSplash(page);
   await expect(page.getByTestId('bigdrop-a')).toBeVisible();
   await expect(page.getByTestId('bigdrop-b')).toBeVisible();
 });
@@ -258,6 +267,7 @@ test('disjoint traces sharing a tool do not bridge across the board', async ({ p
 
 test('a malformed file does not freeze the app', async ({ page }) => {
   await page.goto('/');
+  await dismissSplash(page);
   await page.setInputFiles(FILE_A, {
     name: 'broken.gbr',
     mimeType: 'application/octet-stream',
@@ -355,4 +365,37 @@ test('save a .pcbdiff review and reopen it', async ({ page }) => {
   });
   await expect(page.getByTestId('board-canvas')).toBeVisible();
   await expect(page.getByTestId('error')).toHaveCount(0);
+});
+
+test('measurement unit can switch between mm and mil', async ({ page }) => {
+  await page.goto('/');
+  await loadSingle(page, richFixture);
+  await page.getByTestId('unit-toggle').getByText('mm', { exact: true }).click();
+  await page.getByTestId('measure-btn').click();
+  const box = (await page.getByTestId('board-canvas').boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.4, box.y + box.height * 0.5);
+  await page.mouse.click(box.x + box.width * 0.6, box.y + box.height * 0.5);
+  await expect(page.getByTestId('measure-label')).toContainText('mm');
+  await page.getByTestId('unit-toggle').getByText('mil', { exact: true }).click();
+  await expect(page.getByTestId('measure-label')).toContainText('mil');
+});
+
+test('overlay/onion modes respect per-layer visibility', async ({ page }) => {
+  await page.goto('/');
+  await page.setInputFiles(
+    FILE_A,
+    zipFile({ 'board-F_Cu.gbr': pad(0), 'board-B_Cu.gbr': pad(40000) }),
+  );
+  await page.setInputFiles(
+    FILE_B,
+    zipFile({ 'board-F_Cu.gbr': pad(0), 'board-B_Cu.gbr': pad(40000) }),
+  );
+  await expect(page.getByTestId('board-canvas')).toBeVisible();
+  await page.getByRole('button', { name: 'Overlay', exact: true }).click();
+  await expect(page.getByTestId('layer-row')).toHaveCount(2);
+  const full = await copperPixels(page);
+  // Hiding a layer must drop copper in overlay too (previously B was forced visible).
+  await page.locator('[data-testid=layer-row] .vis').first().click();
+  await expect(page.locator('[data-testid=layer-row]').first()).toHaveClass(/hidden/);
+  expect(await copperPixels(page)).toBeLessThan(full);
 });

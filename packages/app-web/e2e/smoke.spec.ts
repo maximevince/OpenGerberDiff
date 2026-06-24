@@ -8,6 +8,10 @@ test('app shell loads with brand, dropzone and status bar', async ({ page }) => 
 
   await page.goto('/');
 
+  // The splash precedes the picker.
+  await expect(page.getByTestId('splash')).toBeVisible();
+  await page.getByTestId('splash-start').click();
+
   await expect(page.getByRole('heading', { name: 'OpenGerberDiff' })).toBeVisible();
   await expect(page.getByTestId('dropzone')).toBeVisible();
   await expect(page.getByTestId('statusbar')).toBeVisible();

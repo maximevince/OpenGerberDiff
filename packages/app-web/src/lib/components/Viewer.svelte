@@ -15,6 +15,7 @@
     type RenderLayer,
   } from '$lib/render/canvas2d';
   import { fitView, panBy, worldToScreen, zoomAbout, type Viewport } from '$lib/render/viewport';
+  import { untrack } from 'svelte';
 
   interface Props {
     /** Layers in top-first order (rendered bottom-first) — also used for framing. */
@@ -94,9 +95,13 @@
     else renderLayers(ctx, layers.slice().reverse(), vp, background);
   }
 
+  // Fit ONLY when fitKey changes (new project / explicit re-fit). `fit()` reads
+  // `layers` via visibleBounds(), so without untrack() every visibility toggle
+  // would reactively re-fit and rezoom the view — jarring. untrack keeps the
+  // layer reads out of this effect's dependency set.
   $effect(() => {
     void fitKey;
-    fit();
+    untrack(fit);
   });
 
   // Focus on a region.

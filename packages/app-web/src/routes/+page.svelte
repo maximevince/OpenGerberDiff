@@ -13,6 +13,7 @@
   import DiffSummary, { fmtArea } from '$lib/components/DiffSummary.svelte';
   import About, { VERSION, GIT_SHA } from '$lib/components/About.svelte';
   import Help from '$lib/components/Help.svelte';
+  import Splash from '$lib/components/Splash.svelte';
   import { loadProject, type Layer } from '$lib/project';
   import { matchLayers, pairKey, runDiffs, type PairDiff } from '$lib/diff';
   import { settings } from '$lib/stores/settings';
@@ -74,6 +75,9 @@
   let forceSingle = $state(false);
   let aboutOpen = $state(false);
   let helpOpen = $state(false);
+  // The splash shows on the truly-empty initial screen until dismissed; once any
+  // project is loaded it never reappears (the picker takes over).
+  let splashDismissed = $state(false);
 
   // Raw source bytes per slot, held in memory ONLY (never persisted to browser
   // storage) so an explicit .pcbdiff export can bundle the original files.
@@ -189,7 +193,7 @@
       ...slotB.map((l) => ({
         image: l.image,
         color: $settings.colorB,
-        visible: true,
+        visible: l.visible,
         opacity: bOp,
       })),
     ];
@@ -675,6 +679,10 @@
       {#if DIFF_MODES.has(viewMode)}
         <DiffSummary {pairDiffs} onfocus={focusRegion} />
       {/if}
+    {:else if !hasProject && !splashDismissed}
+      <main class="view-area">
+        <Splash onstart={() => (splashDismissed = true)} />
+      </main>
     {:else}
       <main class="view-area">
         <div class="dual-drop" data-testid="dropzone">
@@ -751,6 +759,19 @@
     {/if}
     <span class="spacer"></span>
     {#if error}<span class="err">{error}</span><span class="sep">·</span>{/if}
+    {#if hasProject}
+      <div class="unitsel" data-testid="unit-toggle" title="Measurement unit">
+        {#each ['mm', 'mil', 'inch'] as u (u)}
+          <button
+            class="unit"
+            class:on={$settings.measurementUnit === u}
+            onclick={() => ($settings.measurementUnit = u as typeof $settings.measurementUnit)}
+            >{u === 'inch' ? 'in' : u}</button
+          >
+        {/each}
+      </div>
+      <span class="sep">·</span>
+    {/if}
     <button
       class="build"
       data-testid="build-info"
@@ -1034,6 +1055,29 @@
   }
   .sep {
     opacity: 0.5;
+  }
+  .unitsel {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .unit {
+    background: var(--bg);
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    padding: 0.1rem 0.4rem;
+    cursor: pointer;
+  }
+  .unit:last-child {
+    border-right: none;
+  }
+  .unit.on {
+    background: var(--accent);
+    color: #10101a;
   }
   .added {
     color: #4ea3e0;
