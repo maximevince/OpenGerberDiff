@@ -18,8 +18,8 @@
     "test": "pnpm -r test",
     "e2e": "pnpm --filter @ogd/app-web e2e",
     "electron:dev": "pnpm build && pnpm --filter @ogd/app-shell-electron start",
-    "electron:dist": "pnpm build && pnpm --filter @ogd/app-shell-electron exec electron-builder -c.extraMetadata.version=$npm_package_version",
-    "electron:dist:linux": "pnpm build && pnpm --filter @ogd/app-shell-electron exec electron-builder --linux -c.extraMetadata.version=$npm_package_version"
+    "electron:dist": "pnpm build && pnpm --filter @ogd/app-shell-electron exec electron-builder --config.extraMetadata.version=$npm_package_version",
+    "electron:dist:linux": "pnpm build && pnpm --filter @ogd/app-shell-electron exec electron-builder --linux --config.extraMetadata.version=$npm_package_version"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

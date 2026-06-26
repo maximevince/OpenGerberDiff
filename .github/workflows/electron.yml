@@ -47,7 +47,8 @@ jobs:
 
       - name: Build installer
         working-directory: packages/app-shell-electron
-        run: pnpm exec electron-builder ${{ matrix.args }} --publish never -c.extraMetadata.version=${{ steps.ver.outputs.v }}
+        shell: bash
+        run: pnpm exec electron-builder ${{ matrix.args }} --publish never --config.extraMetadata.version=${{ steps.ver.outputs.v }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
