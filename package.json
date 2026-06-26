@@ -1,6 +1,6 @@
 {
   "name": "opengerberdiff",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "OpenGerberDiff (OGD) — free, open-source, pure-web visual + quantitative diff tool for Gerber/Excellon PCB files.",
   "license": "GPL-3.0-or-later",
@@ -18,8 +18,8 @@
     "test": "pnpm -r test",
     "e2e": "pnpm --filter @ogd/app-web e2e",
     "electron:dev": "pnpm build && pnpm --filter @ogd/app-shell-electron start",
-    "electron:dist": "pnpm build && pnpm --filter @ogd/app-shell-electron dist",
-    "electron:dist:linux": "pnpm build && pnpm --filter @ogd/app-shell-electron dist:linux"
+    "electron:dist": "pnpm build && pnpm --filter @ogd/app-shell-electron exec electron-builder -c.extraMetadata.version=$npm_package_version",
+    "electron:dist:linux": "pnpm build && pnpm --filter @ogd/app-shell-electron exec electron-builder --linux -c.extraMetadata.version=$npm_package_version"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

@@ -1,10 +1,14 @@
 {
   "name": "@ogd/app-shell-electron",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.0.0",
   "description": "Optional minimal Electron desktop wrapper for OpenGerberDiff. Loads the UNMODIFIED app-web static build; the web app never imports Electron.",
   "license": "GPL-3.0-or-later",
-  "author": "Maxime Vincent",
+  "author": {
+    "name": "Maxime Vincent",
+    "email": "maxime@veemax.be"
+  },
+  "homepage": "https://github.com/maximevince/OpenGerberDiff",
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
