@@ -1,5 +1,13 @@
 import * as Comlink from 'comlink';
-import { LAYER_TYPE_LABEL, layerSortIndex, type Classification, type DiffResult } from '@ogd/core';
+import {
+  LAYER_TYPE_LABEL,
+  layerSortIndex,
+  type AlignResult,
+  type Classification,
+  type DiffResult,
+  type Image,
+  type Offset,
+} from '@ogd/core';
 import type { Layer } from './project';
 import type { DiffWorkerApi } from './workers/diff.worker.ts';
 
@@ -63,9 +71,40 @@ function getWorker(): Comlink.Remote<DiffWorkerApi> {
   return workerApi;
 }
 
+// Copper carries the densest, junk-free geometry, so it drives alignment
+// scoring and the pad snap. Top copper first — it's present on virtually every
+// board and matches the user's mental model of "line the boards up".
+const ALIGN_PRIORITY: Partial<Record<Classification['type'], number>> = {
+  topCopper: 0,
+  bottomCopper: 1,
+  innerCopper: 2,
+};
+
+/**
+ * Compute ONE global translation aligning the whole B board onto A in the
+ * worker. Exporters disagree on the design origin globally, so the offset is
+ * board-wide, never per layer. Matched pairs are passed copper-first — the
+ * aligner scores the leading pairs and pad-snaps across all of them.
+ */
+export async function alignBoards(
+  a: Image[],
+  b: Image[],
+  pairs: LayerPair[],
+): Promise<AlignResult> {
+  const imagePairs = pairs
+    .filter((p) => p.a && p.b)
+    .sort(
+      (x, y) =>
+        (ALIGN_PRIORITY[x.classification.type] ?? 9) - (ALIGN_PRIORITY[y.classification.type] ?? 9),
+    )
+    .map((p) => ({ a: p.a!.image, b: p.b!.image }));
+  return getWorker().alignSets(a, b, imagePairs);
+}
+
 /** Diff every matched layer pair (both sides present) in the worker. */
 export async function runDiffs(
   pairs: LayerPair[],
+  offset: Offset,
   onProgress?: (done: number, total: number, label: string) => void,
 ): Promise<PairDiff[]> {
   const both = pairs.filter((p) => p.a && p.b);
@@ -73,7 +112,7 @@ export async function runDiffs(
   let done = 0;
   for (const p of both) {
     onProgress?.(done, both.length, p.label);
-    const result = await getWorker().diff(p.a!.image, p.b!.image, { align: 'auto' });
+    const result = await getWorker().diff(p.a!.image, p.b!.image, { align: offset });
     out.push({ key: p.key, label: p.label, result });
     onProgress?.(++done, both.length, p.label);
   }

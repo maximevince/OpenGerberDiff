@@ -68,8 +68,17 @@
   function visibleBounds(): BoundingBox {
     let box = emptyBoundingBox();
     for (const l of layers) {
-      if (l.visible && isFiniteBoundingBox(l.image.boundingBox)) {
-        box = unionBoundingBox(box, l.image.boundingBox);
+      const bb = l.image.boundingBox;
+      if (l.visible && isFiniteBoundingBox(bb)) {
+        // Frame the layer where it is drawn — including its alignment offset.
+        const ox = l.offsetX ?? 0;
+        const oy = l.offsetY ?? 0;
+        box = unionBoundingBox(box, {
+          minX: bb.minX + ox,
+          minY: bb.minY + oy,
+          maxX: bb.maxX + ox,
+          maxY: bb.maxY + oy,
+        });
       }
     }
     return box;

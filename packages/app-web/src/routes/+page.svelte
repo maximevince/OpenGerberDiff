@@ -9,6 +9,7 @@
     type BoundingBox,
     type LayerSide,
     type LayerType,
+    type Offset,
   } from '@ogd/core';
   import type { Viewport } from '$lib/render/viewport';
   import Viewer from '$lib/components/Viewer.svelte';
@@ -19,7 +20,7 @@
   import Help from '$lib/components/Help.svelte';
   import Splash from '$lib/components/Splash.svelte';
   import { loadProject, type Layer } from '$lib/project';
-  import { matchLayers, pairKey, runDiffs, type PairDiff } from '$lib/diff';
+  import { alignBoards, matchLayers, pairKey, runDiffs, type PairDiff } from '$lib/diff';
   import { settings } from '$lib/stores/settings';
   import { onMenuAction, pickFiles, saveBytes } from '$lib/platform';
   import {
@@ -91,6 +92,50 @@
   let rawA = $state.raw<RawFileBytes[]>([]);
   let rawB = $state.raw<RawFileBytes[]>([]);
 
+  // Global alignment: ONE translation (mm) applied to every B layer, in all
+  // comparison modes and in the diff metrics. Exporters (Altium vs KiCad) disagree
+  // on the design origin board-wide, so the offset is global, never per layer.
+  let alignX = $state(0);
+  let alignY = $state(0);
+  let alignDetected = $state(false);
+  // User owns the offset (typed a value / restored from a session) — loads and
+  // undo/redo stop auto-aligning until a new project arrives or ⌖ is pressed.
+  let manualAlign = false;
+  // Auto-align is a function of the loaded images only, so cache it per loadId —
+  // undo/redo and reclassification recompute diffs without re-running alignment.
+  let alignedLoadId = -1;
+  let alignDebounce: ReturnType<typeof setTimeout> | undefined;
+  const alignOffset = $derived<Offset>({
+    x: Number.isFinite(alignX) ? alignX : 0,
+    y: Number.isFinite(alignY) ? alignY : 0,
+  });
+  function clearAlign() {
+    clearTimeout(alignDebounce);
+    alignX = 0;
+    alignY = 0;
+    alignDetected = false;
+    manualAlign = false;
+    alignedLoadId = -1;
+  }
+  function onManualAlign() {
+    manualAlign = true;
+    alignDetected = false;
+    clearTimeout(alignDebounce);
+    alignDebounce = setTimeout(() => void recompute(), 300);
+  }
+  function resetAlignOffset() {
+    clearTimeout(alignDebounce);
+    manualAlign = true;
+    alignDetected = false;
+    alignX = 0;
+    alignY = 0;
+    void recompute();
+  }
+  async function runAutoAlign() {
+    manualAlign = false;
+    await recompute(true);
+  }
+
   // Undo/redo over the review state (visibility, color, classification, order).
   // Snapshots hold the immutable layer arrays — cheap, since every edit already
   // reassigns them immutably.
@@ -143,11 +188,13 @@
       .map((pd) => {
         const a = slotA.find((l) => pairKey(l.classification) === pd.key) ?? null;
         const b = slotB.find((l) => pairKey(l.classification) === pd.key) ?? null;
+        // The GLOBAL offset, read live so manual tweaks pan B instantly; the
+        // metrics in pd.result catch up when the debounced recompute lands.
         return {
           aImage: a?.image ?? null,
           bImage: b?.image ?? null,
-          offsetX: pd.result.offset.x,
-          offsetY: pd.result.offset.y,
+          offsetX: alignOffset.x,
+          offsetY: alignOffset.y,
         };
       }),
   );
@@ -202,16 +249,29 @@
         color: $settings.colorB,
         visible: l.visible,
         opacity: bOp,
+        offsetX: alignOffset.x,
+        offsetY: alignOffset.y,
       })),
     ];
   });
 
-  // Both split panes frame to the same A∪B union so the boards stay aligned.
+  // Both split panes frame to the same A∪B union so the boards stay aligned
+  // (B's bbox shifted by the global offset, matching where it is drawn).
   const splitUnion = $derived.by(() => {
     let box = emptyBoundingBox();
-    for (const l of [...slotA, ...slotB]) {
+    for (const l of slotA) {
       if (isFiniteBoundingBox(l.image.boundingBox))
         box = unionBoundingBox(box, l.image.boundingBox);
+    }
+    for (const l of slotB) {
+      const bb = l.image.boundingBox;
+      if (isFiniteBoundingBox(bb))
+        box = unionBoundingBox(box, {
+          minX: bb.minX + alignOffset.x,
+          minY: bb.minY + alignOffset.y,
+          maxX: bb.maxX + alignOffset.x,
+          maxY: bb.maxY + alignOffset.y,
+        });
     }
     return box;
   });
@@ -229,6 +289,7 @@
     side: 'a' | 'b',
     files: File[],
     overrides: LayerOverride[] | undefined = undefined,
+    keepAlign = false,
   ) {
     if (files.length === 0) return;
     // A dropped/opened .pcbdiff is a session, not a layer set.
@@ -259,6 +320,14 @@
         rawB = raw;
       }
       loadId += 1;
+      // Fresh files → stale offset; drop it and let recompute() re-align (unless
+      // a session restore already installed the saved offset).
+      if (!keepAlign) {
+        manualAlign = false;
+        alignX = 0;
+        alignY = 0;
+        alignDetected = false;
+      }
       await recompute();
       if (hasBoth) viewMode = 'diff';
       else viewMode = side;
@@ -312,6 +381,7 @@
     const bytes = buildSession({
       viewMode,
       createdAt: new Date().toISOString(),
+      alignOffset: alignOffset.x !== 0 || alignOffset.y !== 0 ? alignOffset : undefined,
       a: hasA ? sideSession(nameA, rawA, slotA) : undefined,
       b: hasB ? sideSession(nameB, rawB, slotB) : undefined,
     });
@@ -324,8 +394,14 @@
       progress = { phase: 'Opening session', done: 0, total: 0 };
       const { manifest, aFiles, bFiles } = parseSession(new Uint8Array(await file.arrayBuffer()));
       reset();
-      if (aFiles.length) await loadInto('a', aFiles, manifest.a?.layers);
-      if (bFiles.length) await loadInto('b', bFiles, manifest.b?.layers);
+      // A saved offset wins over auto-align; without one, recompute() auto-aligns.
+      if (manifest.alignOffset) {
+        alignX = manifest.alignOffset.x;
+        alignY = manifest.alignOffset.y;
+        manualAlign = true;
+      }
+      if (aFiles.length) await loadInto('a', aFiles, manifest.a?.layers, true);
+      if (bFiles.length) await loadInto('b', bFiles, manifest.b?.layers, true);
       if (hasBoth) forceSingle = false;
       else forceSingle = true;
       viewMode = (manifest.viewMode as ViewMode) ?? viewMode;
@@ -341,12 +417,27 @@
     if (files.length) void loadInto('a', files);
   }
 
-  async function recompute() {
+  async function recompute(forceAlign = false) {
     regionIdx = -1;
     if (slotA.length && slotB.length) {
       diffing = true;
       try {
-        pairDiffs = await runDiffs(matchLayers(slotA, slotB), (done, total, label) => {
+        const matched = matchLayers(slotA, slotB);
+        if (forceAlign || (!manualAlign && $settings.autoAlign && alignedLoadId !== loadId)) {
+          progress = { phase: 'Aligning boards', done: 0, total: 0 };
+          const r = await alignBoards(
+            slotA.map((l) => l.image),
+            slotB.map((l) => l.image),
+            matched,
+          );
+          // Round to 1 µm — keeps the offset inputs' step validation happy and is
+          // far below any feature size.
+          alignX = Math.round(r.offset.x * 1000) / 1000;
+          alignY = Math.round(r.offset.y * 1000) / 1000;
+          alignDetected = r.detected;
+          alignedLoadId = loadId;
+        }
+        pairDiffs = await runDiffs(matched, alignOffset, (done, total, label) => {
           progress = { phase: `Diffing ${label}`, done, total };
         });
       } finally {
@@ -527,6 +618,7 @@
     error = null;
     viewMode = 'a';
     forceSingle = false;
+    clearAlign();
   }
 
   // Native-shell menu actions (Electron) map onto the same handlers as the toolbar.
@@ -591,11 +683,49 @@
           type="range"
           min="0"
           max="1"
-          step="0.01"
+          step="0.001"
           bind:value={onionMix}
           title="Blend A ↔ B"
         />
       {/if}
+      <div class="aligngrp" data-testid="align-controls">
+        <button
+          class="mode"
+          data-testid="auto-align"
+          title={alignDetected
+            ? 'Auto-align B to A (offset detected)'
+            : 'Auto-align B to A — one global offset for all layers'}
+          class:on={alignDetected}
+          onclick={runAutoAlign}>⌖</button
+        >
+        <label class="alab" title="Global B offset X (mm, applies to all layers)">
+          ΔX<input
+            class="anum"
+            data-testid="align-x"
+            type="number"
+            step="0.001"
+            bind:value={alignX}
+            oninput={onManualAlign}
+          />
+        </label>
+        <label class="alab" title="Global B offset Y (mm, applies to all layers)">
+          ΔY<input
+            class="anum"
+            data-testid="align-y"
+            type="number"
+            step="0.001"
+            bind:value={alignY}
+            oninput={onManualAlign}
+          />
+        </label>
+        <button
+          class="mode"
+          data-testid="align-reset"
+          title="Reset offset to zero"
+          disabled={alignOffset.x === 0 && alignOffset.y === 0}
+          onclick={resetAlignOffset}>0</button
+        >
+      </div>
       <div class="regionnav">
         <button class="mode" title="Previous change (P)" onclick={() => gotoRegion(-1)}>‹</button>
         <span class="rcount" data-testid="region-count"
@@ -696,7 +826,11 @@
           <div class="pane">
             <div class="pane-label"><span class="tag">B</span>{nameB}</div>
             <Viewer
-              layers={slotB.map(toRender)}
+              layers={slotB.map((l) => ({
+                ...toRender(l),
+                offsetX: alignOffset.x,
+                offsetY: alignOffset.y,
+              }))}
               bind:vp={splitVp}
               fitBounds={splitUnion}
               unit={$settings.measurementUnit}
@@ -913,6 +1047,33 @@
   .onion {
     width: 90px;
     accent-color: var(--accent);
+  }
+  .aligngrp {
+    display: flex;
+    gap: 2px;
+    align-items: center;
+  }
+  .alab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+  .anum {
+    width: 4.4rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 5px;
+    padding: 0.18rem 0.3rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+  .anum:focus {
+    border-color: var(--accent);
+    outline: none;
   }
   .rcount {
     font-family: var(--mono);

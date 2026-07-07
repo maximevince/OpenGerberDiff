@@ -5,7 +5,7 @@
  * reproduces the whole review standalone, even on another machine. See docs/03 §4.
  */
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
-import type { LayerType } from '@ogd/core';
+import type { LayerType, Offset } from '@ogd/core';
 
 export const PCBDIFF_EXT = '.pcbdiff';
 const FORMAT = 'opengerberdiff';
@@ -33,6 +33,8 @@ export interface SessionManifest {
   version: 1;
   createdAt: string;
   viewMode: string;
+  /** Global alignment translation applied to B (mm). Absent in older sessions. */
+  alignOffset?: Offset;
   a?: { name: string; layers: LayerOverride[] };
   b?: { name: string; layers: LayerOverride[] };
 }
@@ -45,6 +47,7 @@ export function isSessionFile(name: string): boolean {
 export function buildSession(input: {
   viewMode: string;
   createdAt: string;
+  alignOffset?: Offset;
   a?: SessionSide;
   b?: SessionSide;
 }): Uint8Array {
@@ -54,6 +57,7 @@ export function buildSession(input: {
     version: 1,
     createdAt: input.createdAt,
     viewMode: input.viewMode,
+    ...(input.alignOffset ? { alignOffset: input.alignOffset } : {}),
   };
   for (const side of ['a', 'b'] as const) {
     const s = input[side];

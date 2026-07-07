@@ -41,6 +41,24 @@ describe('session (.pcbdiff)', () => {
     expect(await bFiles[0]!.text()).toBe('G04 B*');
   });
 
+  it('round-trips the global alignment offset (and omits it when absent)', () => {
+    const withOffset = parseSession(
+      buildSession({
+        viewMode: 'diff',
+        createdAt: '2026-07-07T00:00:00Z',
+        alignOffset: { x: -148.509, y: 111 },
+        a: sideA,
+        b: sideB,
+      }),
+    );
+    expect(withOffset.manifest.alignOffset).toEqual({ x: -148.509, y: 111 });
+
+    const without = parseSession(
+      buildSession({ viewMode: 'diff', createdAt: '2026-07-07T00:00:00Z', a: sideA, b: sideB }),
+    );
+    expect(without.manifest.alignOffset).toBeUndefined();
+  });
+
   it('supports a single-project session', () => {
     const bytes = buildSession({ viewMode: 'a', createdAt: '2026-06-23T00:00:00Z', a: sideA });
     const { manifest, aFiles, bFiles } = parseSession(bytes);

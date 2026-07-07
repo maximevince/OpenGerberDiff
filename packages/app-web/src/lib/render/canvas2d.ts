@@ -12,6 +12,9 @@ export interface RenderLayer {
   visible: boolean;
   /** 0..1; used by onion-skin to blend A and B. Defaults to 1. */
   opacity?: number;
+  /** Alignment translation in world mm (the global B-side offset). Defaults to 0. */
+  offsetX?: number;
+  offsetY?: number;
 }
 
 const TWO_PI = Math.PI * 2;
@@ -227,6 +230,10 @@ export function renderLayers(
     const comp = compiledFor(layer.image);
     const alpha = layer.opacity ?? 1;
     if (alpha <= 0) continue;
+    const ox = layer.offsetX ?? 0;
+    const oy = layer.offsetY ?? 0;
+    const tx = vp.panX + vp.zoom * ox;
+    const ty = vp.panY - vp.zoom * oy;
     ctx.globalAlpha = alpha;
     if (comp.hasClear) {
       // Isolate clear-polarity on an offscreen so it only erases within the layer.
@@ -234,13 +241,13 @@ export function renderLayers(
       off.ctx.setTransform(1, 0, 0, 1, 0, 0);
       off.ctx.globalCompositeOperation = 'source-over';
       off.ctx.clearRect(0, 0, vp.width, vp.height);
-      off.ctx.setTransform(vp.zoom, 0, 0, -vp.zoom, vp.panX, vp.panY);
+      off.ctx.setTransform(vp.zoom, 0, 0, -vp.zoom, tx, ty);
       drawCompiled(off.ctx, comp, layer.color);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(off.canvas, 0, 0);
     } else {
       // No clears → paint straight onto the main canvas (skips the blit).
-      ctx.setTransform(vp.zoom, 0, 0, -vp.zoom, vp.panX, vp.panY);
+      ctx.setTransform(vp.zoom, 0, 0, -vp.zoom, tx, ty);
       drawCompiled(ctx, comp, layer.color);
     }
     ctx.globalAlpha = 1;

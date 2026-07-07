@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Graphic, Image, ShapePrimitive } from '../model/index.js';
 import { emptyBoundingBox, expandBoundingBox } from '../model/index.js';
 import { makeGridSpec, rasterize, cellAreaMm2 } from '../raster/index.js';
-import { autoAlign } from '../align/index.js';
+import { autoAlign, autoAlignSets } from '../align/index.js';
 import { classGridHash, diffImages } from './index.js';
 
 /** Build a minimal Image from rectangular pads (size in mm, centered at x,y). */
@@ -109,6 +109,30 @@ describe('alignment', () => {
     const r = diffImages(a, b, { cellSizeMm: 0.05, align: 'auto' });
     expect(r.alignDetected).toBe(true);
     expect(r.metrics.changedMm2).toBeLessThan(1); // near-perfect overlap
+  });
+
+  it('finds ONE global translation across a whole layer set', () => {
+    // Two "layers" per side (copper + mask), B exported with a +10/-5 mm origin shift.
+    const aCopper = squares([
+      { x: 0, y: 0, w: 8, h: 8 },
+      { x: 12, y: 4, w: 2, h: 2 },
+    ]);
+    const aMask = squares([{ x: 0, y: 0, w: 9, h: 9 }]);
+    const bCopper = squares([
+      { x: 10, y: -5, w: 8, h: 8 },
+      { x: 22, y: -1, w: 2, h: 2 },
+    ]);
+    const bMask = squares([{ x: 10, y: -5, w: 9, h: 9 }]);
+    const al = autoAlignSets([aCopper, aMask], [bCopper, bMask]);
+    expect(al.detected).toBe(true);
+    expect(al.offset.x).toBeCloseTo(-10, 1);
+    expect(al.offset.y).toBeCloseTo(5, 1);
+  });
+
+  it('global align of empty sets is a no-op', () => {
+    const al = autoAlignSets([], []);
+    expect(al.detected).toBe(false);
+    expect(al.offset).toEqual({ x: 0, y: 0 });
   });
 });
 
