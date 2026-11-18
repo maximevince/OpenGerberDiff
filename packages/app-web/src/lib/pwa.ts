@@ -13,13 +13,13 @@ export const updateReady = writable(false);
 
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
 let waiting: ServiceWorker | null = null;
+let applying = false;
 
-function trackWaiting(sw: ServiceWorker | null): void {
-  if (!sw) return;
+function trackWaiting(sw: ServiceWorker | null, isUpdate: boolean): void {
+  // The very first install has nothing to replace, so it's never an update.
+  if (!sw || !isUpdate) return;
   const ready = () => {
-    // Only an *update* if a previous version is already controlling this page;
-    // the very first install has nothing to replace.
-    if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+    if (sw.state === 'installed') {
       waiting = sw;
       updateReady.set(true);
     }
@@ -32,8 +32,11 @@ export async function registerServiceWorker(): Promise<void> {
   if (dev || isElectron() || !('serviceWorker' in navigator)) return;
   try {
     const reg = await navigator.serviceWorker.register(`${base}/service-worker.js`);
-    trackWaiting(reg.waiting);
-    reg.addEventListener('updatefound', () => trackWaiting(reg.installing));
+    // Is a version already controlling this page? Checked when a worker shows up —
+    // a first install only gets a controller later, via clients.claim().
+    const isUpdate = () => !!navigator.serviceWorker.controller;
+    trackWaiting(reg.waiting, isUpdate());
+    reg.addEventListener('updatefound', () => trackWaiting(reg.installing, isUpdate()));
 
     // Long-lived tabs / installed windows: poll for new deploys.
     const check = () => void reg.update().catch(() => {});
@@ -42,10 +45,11 @@ export async function registerServiceWorker(): Promise<void> {
       if (document.visibilityState === 'visible') check();
     });
 
-    let reloading = false;
+    // Reload only when the user asked for the update — never on a first-install
+    // clients.claim() or a version activated by another tab.
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (reloading || !waiting) return; // ignore first-install clients.claim()
-      reloading = true;
+      if (!applying) return;
+      applying = false;
       location.reload();
     });
   } catch (err) {
@@ -55,5 +59,7 @@ export async function registerServiceWorker(): Promise<void> {
 
 /** Activate the waiting version; the page reloads on `controllerchange`. */
 export function applyUpdate(): void {
-  waiting?.postMessage('SKIP_WAITING');
+  if (!waiting) return;
+  applying = true;
+  waiting.postMessage('SKIP_WAITING');
 }
