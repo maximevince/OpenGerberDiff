@@ -10,7 +10,8 @@ files never leave your machine.
 ## What it is
 
 - A **SvelteKit static SPA** — no backend, no accounts, no licensing, no telemetry.
-- Runs in any modern browser; installable as a PWA; optional thin Electron wrapper
+- Runs in any modern browser; installable as a PWA that works fully offline and
+  prompts to reload when a new version is deployed; optional thin Electron wrapper
   and optional CLI share the same core (later phases).
 - Parser front-end via `@tracespace` v4 (`gerber-parser` + `gerber-plotter`),
   isolated behind an adapter so it stays swappable.

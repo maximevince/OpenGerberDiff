@@ -13,6 +13,10 @@ const config = {
       precompress: false,
       strict: false,
     }),
+    // Offline/installable PWA: src/service-worker.ts is bundled by SvelteKit, but we
+    // register it ourselves (src/lib/pwa.ts) so we can drive the update prompt and
+    // skip registration inside the Electron shell.
+    serviceWorker: { register: false },
   },
 };
 
